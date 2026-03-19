@@ -8,11 +8,11 @@ config = ObsGenConfig(
     lat_min=5, lat_max=60,
     lon_min=-100, lon_max=-30,
     obs_types=["ARGO_TEMPERATURE", "ARGO_SALINITY"],
-    assimilation_frequency_hours=6,
+    assimilation_frequency=datetime.timedelta(hours=6),
 )
-print("ObsGenConfig OK:", config.assimilation_frequency_hours, "h windows")
+print("ObsGenConfig OK:", config.assimilation_frequency, "windows")
 
-windows = _make_windows(config.start, config.end, config.assimilation_frequency_hours)
+windows = _make_windows(config.start, config.end, config.assimilation_frequency)
 print("Windows for 1 day @ 6h:", len(windows), "windows")
 for w0, w1 in windows:
     ts = _format_timestamp(w0, config.output_timestamp_format)

@@ -20,15 +20,15 @@ def _format_timestamp(dt: datetime, fmt: str) -> str:
 
 
 def _make_windows(
-    start: datetime, end: datetime, freq_hours: int
+    start: datetime, end: datetime, freq: timedelta
 ) -> list[tuple[datetime, datetime]]:
     """Return half-open time windows ``[t0, t0 + freq)`` starting at *start*.
 
-    Windows are exactly *freq_hours* wide.  The last window may extend
+    Windows are exactly *freq* wide.  The last window may extend
     beyond *end* to keep all window sizes uniform; data queries use
     ``JULD < date1`` so observations are fetched only within each window.
     """
-    delta = timedelta(hours=freq_hours)
+    delta = freq
     windows: list[tuple[datetime, datetime]] = []
     t0 = start
     while t0 < end:
@@ -59,7 +59,7 @@ def generate_obs_sequences(config: ObsGenConfig, source: DataSource) -> list[str
         Paths of obs_seq files written to disk (empty windows omitted).
     """
     os.makedirs(config.output_dir, exist_ok=True)
-    windows = _make_windows(config.start, config.end, config.assimilation_frequency_hours)
+    windows = _make_windows(config.start, config.end, config.assimilation_frequency)
     written: list[str] = []
 
     for date0, date1 in windows:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 @dataclass
@@ -23,8 +23,8 @@ class ObsGenConfig:
         (e.g. ``"ARGO_TEMPERATURE"``), DART variable names
         (e.g. ``"TEMPERATURE"``), or CrocoLake variable names
         (e.g. ``"TEMP"``).
-    assimilation_frequency_hours : int
-        Width of each assimilation window in hours.  Default 6.
+    assimilation_frequency : timedelta
+        Width of each assimilation window.  Default ``timedelta(hours=6)``.
     output_dir : str
         Directory where obs_seq files are written.  Created if absent.
     output_prefix : str
@@ -54,7 +54,7 @@ class ObsGenConfig:
 
     obs_types: list[str]
 
-    assimilation_frequency_hours: int = 6
+    assimilation_frequency: timedelta = field(default_factory=lambda: timedelta(hours=6))
 
     output_dir: str = "."
     output_prefix: str = "obs_seq"
