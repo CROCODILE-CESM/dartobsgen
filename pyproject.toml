@@ -5,8 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dartobsgen"
 version = "0.1.0"
+authors = [ 
+  { name="Helen Kershaw", email="hkershaw@ucar.edu" },
+]
 description = "Generate non-overlapping DART obs_seq files from pluggable observation sources."
+readme = "README.md"
 requires-python = ">=3.10"
+license = "Apache-2.0"
 dependencies = [
     "pyarrow",
     "dask[dataframe]",
