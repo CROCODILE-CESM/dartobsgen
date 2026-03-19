@@ -1,11 +1,11 @@
-# dart_obs_gen
+# dartobsgen
 
 A pip-installable Python package that generates non-overlapping DART `obs_seq` files from pluggable observation data sources.
 
 ## Install
 
 ```bash
-cd /path/to/dart_obs_gen
+cd /path/to/dartobsgen
 pip install -e .
 ```
 
@@ -13,7 +13,7 @@ pip install -e .
 
 ```python
 import datetime
-from dart_obs_gen import ObsGenConfig, CrocLakeSource, generate_obs_sequences
+from dartobsgen import ObsGenConfig, CrocLakeSource, generate_obs_sequences
 
 config = ObsGenConfig(
     start=datetime.datetime(2010, 5, 1),
@@ -37,11 +37,11 @@ print(written_files)
 ## Package Structure
 
 ```
-dart_obs_gen/
+dartobsgen/
 ├── pyproject.toml
 ├── README.md
 └── src/
-    └── dart_obs_gen/
+    └── dartobsgen/
         ├── __init__.py           # Public API
         ├── config.py             # ObsGenConfig dataclass
         ├── generate.py           # generate_obs_sequences(), _make_windows()
@@ -122,10 +122,10 @@ window widths uniform.
 
 ## Adding a new data source
 
-Subclass `dart_obs_gen.DataSource` and implement `write_obs_seq()`:
+Subclass `dartobsgen.DataSource` and implement `write_obs_seq()`:
 
 ```python
-from dart_obs_gen import DataSource
+from dartobsgen import DataSource
 
 class MySource(DataSource):
     def write_obs_seq(self, output_file, date0, date1,
@@ -135,5 +135,5 @@ class MySource(DataSource):
         ...
 ```
 
-`ObsSeqSource` in `dart_obs_gen.sources.base` is a pre-wired stub for
+`ObsSeqSource` in `dartobsgen.sources.base` is a pre-wired stub for
 a future data source backed by a bank of existing obs_seq files.

@@ -6,7 +6,7 @@ from datetime import datetime
 
 @dataclass
 class ObsGenConfig:
-    """Configuration for a dart_obs_gen run.
+    """Configuration for a dartobsgen run.
 
     Parameters
     ----------

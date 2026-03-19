@@ -1,6 +1,6 @@
 import datetime
-from dart_obs_gen import ObsGenConfig, CrocLakeSource, ObsSeqSource, DataSource, generate_obs_sequences
-from dart_obs_gen.generate import _make_windows, _format_timestamp
+from dartobsgen import ObsGenConfig, CrocLakeSource, ObsSeqSource, DataSource, generate_obs_sequences
+from dartobsgen.generate import _make_windows, _format_timestamp
 
 config = ObsGenConfig(
     start=datetime.datetime(2010, 5, 1),

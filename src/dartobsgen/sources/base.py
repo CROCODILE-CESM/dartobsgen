@@ -5,7 +5,7 @@ from datetime import datetime
 
 
 class DataSource(ABC):
-    """Abstract base class for dart_obs_gen data sources.
+    """Abstract base class for dartobsgen data sources.
 
     Subclass this to plug in a new observation data backend without
     changing any calling code.
