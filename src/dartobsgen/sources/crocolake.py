@@ -73,13 +73,12 @@ class CrocLakeSource(DataSource):
         self.dart_path = dart_path
         self.loose = loose
 
+    def _import_converter(self):
         converter_path = os.path.join(
-            dart_path, "observations", "obs_converters", "CrocoLake"
+            self.dart_path, "observations", "obs_converters", "CrocoLake"
         )
         if converter_path not in sys.path:
             sys.path.insert(0, converter_path)
-
-    def _import_converter(self):
         from convert_crocolake_obs import ObsSequence  # noqa: PLC0415
         return ObsSequence
 

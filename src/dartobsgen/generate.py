@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta
 
 from .config import ObsGenConfig
@@ -37,7 +38,42 @@ def _make_windows(
     return windows
 
 
-def generate_obs_sequences(config: ObsGenConfig, source: DataSource) -> list[str]:
+def _run_window(
+    source: DataSource,
+    output_file: str,
+    date0: datetime,
+    date1: datetime,
+    lat_min: float,
+    lat_max: float,
+    lon_min: float,
+    lon_max: float,
+    obs_types: list[str],
+    obs_type_map: dict | None,
+) -> str | None:
+    """Write one obs_seq window. Returns the path if written, else None."""
+    print(
+        f"Window {date0.isoformat()} → {date1.isoformat()} "
+        f"→ {os.path.basename(output_file)}"
+    )
+    success = source.write_obs_seq(
+        output_file=output_file,
+        date0=date0,
+        date1=date1,
+        lat_min=lat_min,
+        lat_max=lat_max,
+        lon_min=lon_min,
+        lon_max=lon_max,
+        obs_types=obs_types,
+        obs_type_map=obs_type_map,
+    )
+    return output_file if success else None
+
+
+def generate_obs_sequences(
+    config: ObsGenConfig,
+    source: DataSource,
+    max_workers: int | None = None,
+) -> list[str]:
     """Generate one DART obs_seq file per assimilation window.
 
     Iterates over non-overlapping half-open windows from ``config.start``
@@ -52,37 +88,57 @@ def generate_obs_sequences(config: ObsGenConfig, source: DataSource) -> list[str
         output path and naming settings).
     source : DataSource
         Observation data source (e.g. ``CrocLakeSource``).
+    max_workers : int or None
+        Number of parallel worker processes.
+        ``None`` uses all available CPUs; ``1`` runs sequentially.
 
     Returns
     -------
     list[str]
-        Paths of obs_seq files written to disk (empty windows omitted).
+        Paths of obs_seq files written to disk (empty windows omitted),
+        in chronological order.
     """
     os.makedirs(config.output_dir, exist_ok=True)
     windows = _make_windows(config.start, config.end, config.assimilation_frequency)
-    written: list[str] = []
 
-    for date0, date1 in windows:
-        timestamp = _format_timestamp(date0, config.output_timestamp_format)
-        output_file = os.path.join(
-            config.output_dir, f"{config.output_prefix}.{timestamp}.out"
+    jobs = [
+        (
+            os.path.join(
+                config.output_dir,
+                f"{config.output_prefix}"
+                f".{_format_timestamp(date0, config.output_timestamp_format)}.out",
+            ),
+            date0,
+            date1,
         )
-        print(
-            f"Window {date0.isoformat()} → {date1.isoformat()} "
-            f"→ {os.path.basename(output_file)}"
-        )
-        success = source.write_obs_seq(
-            output_file=output_file,
-            date0=date0,
-            date1=date1,
-            lat_min=config.lat_min,
-            lat_max=config.lat_max,
-            lon_min=config.lon_min,
-            lon_max=config.lon_max,
-            obs_types=config.obs_types,
-            obs_type_map=config.obs_type_map,
-        )
-        if success:
-            written.append(output_file)
+        for date0, date1 in windows
+    ]
+    shared = dict(
+        lat_min=config.lat_min,
+        lat_max=config.lat_max,
+        lon_min=config.lon_min,
+        lon_max=config.lon_max,
+        obs_types=config.obs_types,
+        obs_type_map=config.obs_type_map,
+    )
 
-    return written
+    cpu_count = os.cpu_count() or 1
+    if max_workers == 1:
+        print(f"Running sequentially (1 worker, {cpu_count} CPU(s) available) over {len(jobs)} window(s).")
+        results = [
+            _run_window(source, output_file, date0, date1, **shared)
+            for output_file, date0, date1 in jobs
+        ]
+    else:
+        effective = max_workers if max_workers is not None else cpu_count
+        oversubscribed = effective > cpu_count
+        note = f" [oversubscribed: {cpu_count} CPU(s) available]" if oversubscribed else ""
+        print(f"Running in parallel with {effective} worker(s) over {len(jobs)} window(s).{note}")
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(_run_window, source, output_file, date0, date1, **shared)
+                for output_file, date0, date1 in jobs
+            ]
+            results = [f.result() for f in futures]
+
+    return [r for r in results if r is not None]

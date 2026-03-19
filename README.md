@@ -21,7 +21,7 @@ config = ObsGenConfig(
     lat_min=5,   lat_max=60,
     lon_min=-100, lon_max=-30,
     obs_types=["ARGO_TEMPERATURE", "ARGO_SALINITY"],
-    assimilation_frequency_hours=6,
+    assimilation_frequency=datetime.timedelta(hours=6),
     output_dir="./obs_output",
 )
 
@@ -30,7 +30,15 @@ source = CrocLakeSource(
     dart_path="/path/to/DART/",
 )
 
+# Sequential
 written_files = generate_obs_sequences(config, source)
+
+# Parallel (all CPUs)
+written_files = generate_obs_sequences(config, source, max_workers=None)
+
+# Parallel (fixed number of workers)
+written_files = generate_obs_sequences(config, source, max_workers=4)
+
 print(written_files)
 ```
 
@@ -119,6 +127,44 @@ config = ObsGenConfig(..., obs_type_map=my_map)
 Windows are half-open: `[t0, t0 + freq)`.  Adjacent windows share no
 observations.  The last window may extend beyond `end` to keep all
 window widths uniform.
+
+`assimilation_frequency` accepts any `datetime.timedelta`, so sub-hourly
+windows are fully supported:
+
+```python
+import datetime
+from dartobsgen import ObsGenConfig
+
+# 6-hour windows (default)
+config = ObsGenConfig(..., assimilation_frequency=datetime.timedelta(hours=6))
+
+# 30-minute windows
+config = ObsGenConfig(..., assimilation_frequency=datetime.timedelta(minutes=30))
+```
+
+## Parallel generation
+
+`generate_obs_sequences` runs windows in parallel using
+`concurrent.futures.ProcessPoolExecutor`.  Control parallelism with the
+`max_workers` argument:
+
+```python
+# All available CPUs (default)
+written = generate_obs_sequences(config, source)
+
+# Fixed number of worker processes
+written = generate_obs_sequences(config, source, max_workers=4)
+
+# Sequential (useful for debugging)
+written = generate_obs_sequences(config, source, max_workers=1)
+```
+
+Each worker process independently opens the CrocoLake parquet database
+and writes its own output file, so there are no shared-state conflicts.
+
+**Note:** scripts that call `generate_obs_sequences` with `max_workers != 1`
+must be run under a `if __name__ == "__main__":` guard (standard Python
+multiprocessing requirement on macOS / Windows).
 
 ## Adding a new data source
 
