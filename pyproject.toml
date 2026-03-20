@@ -16,6 +16,10 @@ dependencies = [
     "pyarrow",
     "dask[dataframe]",
     "pandas",
+    "shapely>=2.0",
+    "xarray",
+    "scikit-image",
+    "scipy",
 ]
 
 [tool.setuptools.packages.find]

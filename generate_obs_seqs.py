@@ -13,7 +13,14 @@ from __future__ import annotations
 
 import datetime
 
-from dartobsgen import CrocLakeSource, ObsGenConfig, generate_obs_sequences
+from dartobsgen import (
+    CrocLakeSource,
+    ObsGenConfig,
+    generate_obs_sequences,
+    polygon_from_netcdf_mask,
+    polygon_from_netcdf_vertices,
+    trim_obs_seq,
+)
 
 DART_PATH = "/Users/hkershaw/DART/Crocodile/Observations/DART"
 CROCOLAKE_PATH = "/Users/hkershaw/DART/Crocodile/Observations/crocolake/"
@@ -51,12 +58,39 @@ def main() -> None:
 
     # Parallel across all available CPUs.
     # Use max_workers=1 to run sequentially (easier to debug).
-    written = generate_obs_sequences(config, source, max_workers=2)
+    written = generate_obs_sequences(config, source, max_workers=None)
 
     print()
     print(f"Done. {len(written)} file(s) written:")
     for path in written:
         print(f"  {path}")
+
+    # ------------------------------------------------------------------
+    # Optional: trim to a polygon boundary
+    # ------------------------------------------------------------------
+    # Uncomment one of the blocks below and set the correct file/variable
+    # names, then call trim_obs_seq on each written file.
+
+    # -- Option 1: polygon from 1D boundary vertices in a NetCDF file --
+    # poly = polygon_from_netcdf_vertices(
+    #     "/path/to/boundary.nc",
+    #     lat_var="boundary_lat",
+    #     lon_var="boundary_lon",
+    # )
+
+    # -- Option 2: polygon from a 2D 0/1 mask in a NetCDF file ---------
+    # poly = polygon_from_netcdf_mask(
+    #     "/path/to/ocean_mask.nc",
+    #     mask_var="mask",
+    #     lat_var="lat",
+    #     lon_var="lon",
+    # )
+
+    # -- Apply the trim (overwrite in place) ----------------------------
+    # if written:
+    #     print("\nApplying polygon trim...")
+    #     trimmed = [p for p in written if trim_obs_seq(p, poly)]
+    #     print(f"{len(trimmed)} file(s) retained observations after trim.")
 
 
 if __name__ == "__main__":
