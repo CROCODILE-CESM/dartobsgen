@@ -15,6 +15,7 @@ import datetime
 
 from dartobsgen import (
     CrocLakeSource,
+    NNJASource,
     ObsGenConfig,
     generate_obs_sequences,
     polygon_from_netcdf_mask,
@@ -106,6 +107,40 @@ def main() -> None:
     #     print("\nApplying polygon trim...")
     #     trimmed = [p for p in written if trim_obs_seq(p, poly)]
     #     print(f"{len(trimmed)} file(s) retained observations after trim.")
+
+
+# ------------------------------------------------------------------
+# NNJA example (uncomment to use instead of, or alongside, CrocoLake)
+# ------------------------------------------------------------------
+# def main_nnja() -> None:
+#     """Generate surface obs from NNJA-AI cloud archive."""
+#     config = ObsGenConfig(
+#         start=datetime.datetime(2021, 1, 1),
+#         end=datetime.datetime(2021, 1, 2),
+#         lat_min=-90.0,
+#         lat_max=90.0,
+#         lon_min=-180.0,
+#         lon_max=180.0,
+#         obs_types=[
+#             "METAR_TEMPERATURE_2_METER",
+#             "METAR_U_10_METER_WIND",
+#             "METAR_V_10_METER_WIND",
+#             # "RADIOSONDE_TEMPERATURE",
+#             # "RADIOSONDE_U_WIND_COMPONENT",
+#             # "RADIOSONDE_V_WIND_COMPONENT",
+#         ],
+#         assimilation_frequency=datetime.timedelta(hours=6),
+#         output_dir=OUTPUT_DIR,
+#         output_prefix="obs_seq",
+#     )
+#
+#     source = NNJASource(catalog_mirror="gcp_nodd")
+#
+#     print(f"Generating NNJA obs_seq files in: {OUTPUT_DIR}")
+#     written = generate_obs_sequences(config, source, max_workers=None)
+#     print(f"Done. {len(written)} file(s) written.")
+#     for path in written:
+#         print(f"  {path}")
 
 
 if __name__ == "__main__":

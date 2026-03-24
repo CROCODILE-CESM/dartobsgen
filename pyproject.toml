@@ -20,6 +20,7 @@ dependencies = [
     "xarray",
     "scikit-image",
     "scipy",
+    "nnja-ai",
 ]
 
 [tool.setuptools.packages.find]
