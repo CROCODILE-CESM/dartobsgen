@@ -28,6 +28,21 @@ CROCOLAKE_PATH = "/Users/hkershaw/DART/Crocodile/Observations/crocolake/"
 OUTPUT_DIR = "./obs_output"
 
 
+requested_obs = ["ARGO_TEMPERATURE",
+    "ARGO_SALINITY",
+    "ARGO_OXYGEN",
+    "BOTTLE_TEMPERATURE",
+    "BOTTLE_SALINITY",
+    "BOTTLE_OXYGEN",
+    "BOTTLE_ALKALINITY",
+    "BOTTLE_INORGANIC_CARBON",
+    "BOTTLE_NITRATE",
+    "BOTTLE_SILICATE",
+    "BOTTLE_PHOSPHATE",
+    "GLIDER_TEMPERATURE",
+    "GLIDER_SALINITY" ]
+
+
 def main() -> None:
     config = ObsGenConfig(
         start=datetime.datetime(2010, 5, 1),
