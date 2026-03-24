@@ -44,42 +44,42 @@ requested_obs = ["ARGO_TEMPERATURE",
     "GLIDER_SALINITY" ]
 
 
-def main() -> None:
-    config = ObsGenConfig(
-        start=datetime.datetime(2010, 5, 1),
-        end=datetime.datetime(2010, 5, 3),
-        lat_min=5.0,
-        lat_max=60.0,
-        lon_min=-100.0,
-        lon_max=-30.0,
-        obs_types=["ARGO_TEMPERATURE", "ARGO_SALINITY"],
-        assimilation_frequency=datetime.timedelta(hours=6),
-        output_dir=OUTPUT_DIR,
-        output_prefix="obs_seq",
-        # Default format produces e.g. obs_seq.2010-05-01-00000.out
-        # Uncomment for compact DART format: obs_seq.2010050100.out
-        # output_timestamp_format="%Y%m%d%H",
-    )
+# def main() -> None:
+#     config = ObsGenConfig(
+#         start=datetime.datetime(2010, 5, 1),
+#         end=datetime.datetime(2010, 5, 3),
+#         lat_min=5.0,
+#         lat_max=60.0,
+#         lon_min=-100.0,
+#         lon_max=-30.0,
+#         obs_types=["ARGO_TEMPERATURE", "ARGO_SALINITY"],
+#         assimilation_frequency=datetime.timedelta(hours=6),
+#         output_dir=OUTPUT_DIR,
+#         output_prefix="obs_seq",
+#         # Default format produces e.g. obs_seq.2010-05-01-00000.out
+#         # Uncomment for compact DART format: obs_seq.2010050100.out
+#         # output_timestamp_format="%Y%m%d%H",
+#     )
 
-    source = CrocLakeSource(
-        crocolake_path=CROCOLAKE_PATH,
-        dart_path=DART_PATH,
-    )
+#     source = CrocLakeSource(
+#         crocolake_path=CROCOLAKE_PATH,
+#         dart_path=DART_PATH,
+#     )
 
-    print(f"Generating obs_seq files in: {OUTPUT_DIR}")
-    print(f"Time range : {config.start} → {config.end}")
-    print(f"Window size: {config.assimilation_frequency}")
-    print(f"Obs types  : {config.obs_types}")
-    print()
+#     print(f"Generating obs_seq files in: {OUTPUT_DIR}")
+#     print(f"Time range : {config.start} → {config.end}")
+#     print(f"Window size: {config.assimilation_frequency}")
+#     print(f"Obs types  : {config.obs_types}")
+#     print()
 
-    # Parallel across all available CPUs.
-    # Use max_workers=1 to run sequentially (easier to debug).
-    written = generate_obs_sequences(config, source, max_workers=None)
+#     # Parallel across all available CPUs.
+#     # Use max_workers=1 to run sequentially (easier to debug).
+#     written = generate_obs_sequences(config, source, max_workers=None)
 
-    print()
-    print(f"Done. {len(written)} file(s) written:")
-    for path in written:
-        print(f"  {path}")
+#     print()
+#     print(f"Done. {len(written)} file(s) written:")
+#     for path in written:
+#         print(f"  {path}")
 
     # ------------------------------------------------------------------
     # Optional: trim to a polygon boundary
@@ -112,35 +112,35 @@ def main() -> None:
 # ------------------------------------------------------------------
 # NNJA example (uncomment to use instead of, or alongside, CrocoLake)
 # ------------------------------------------------------------------
-# def main_nnja() -> None:
-#     """Generate surface obs from NNJA-AI cloud archive."""
-#     config = ObsGenConfig(
-#         start=datetime.datetime(2021, 1, 1),
-#         end=datetime.datetime(2021, 1, 2),
-#         lat_min=-90.0,
-#         lat_max=90.0,
-#         lon_min=-180.0,
-#         lon_max=180.0,
-#         obs_types=[
-#             "METAR_TEMPERATURE_2_METER",
-#             "METAR_U_10_METER_WIND",
-#             "METAR_V_10_METER_WIND",
-#             # "RADIOSONDE_TEMPERATURE",
-#             # "RADIOSONDE_U_WIND_COMPONENT",
-#             # "RADIOSONDE_V_WIND_COMPONENT",
-#         ],
-#         assimilation_frequency=datetime.timedelta(hours=6),
-#         output_dir=OUTPUT_DIR,
-#         output_prefix="obs_seq",
-#     )
-#
-#     source = NNJASource(catalog_mirror="gcp_nodd")
-#
-#     print(f"Generating NNJA obs_seq files in: {OUTPUT_DIR}")
-#     written = generate_obs_sequences(config, source, max_workers=None)
-#     print(f"Done. {len(written)} file(s) written.")
-#     for path in written:
-#         print(f"  {path}")
+def main() -> None:
+    """Generate surface obs from NNJA-AI cloud archive."""
+    config = ObsGenConfig(
+        start=datetime.datetime(2021, 1, 1),
+        end=datetime.datetime(2021, 1, 2),
+        lat_min=-90.0,
+        lat_max=90.0,
+        lon_min=-180.0,
+        lon_max=180.0,
+        obs_types=[
+            "METAR_TEMPERATURE_2_METER",
+            "METAR_U_10_METER_WIND",
+            "METAR_V_10_METER_WIND",
+            # "RADIOSONDE_TEMPERATURE",
+            # "RADIOSONDE_U_WIND_COMPONENT",
+            # "RADIOSONDE_V_WIND_COMPONENT",
+        ],
+        assimilation_frequency=datetime.timedelta(hours=6),
+        output_dir=OUTPUT_DIR,
+        output_prefix="obs_seq",
+    )
+
+    source = NNJASource(catalog_mirror="gcp_nodd")
+
+    print(f"Generating NNJA obs_seq files in: {OUTPUT_DIR}")
+    written = generate_obs_sequences(config, source, max_workers=None)
+    print(f"Done. {len(written)} file(s) written.")
+    for path in written:
+        print(f"  {path}")
 
 
 if __name__ == "__main__":

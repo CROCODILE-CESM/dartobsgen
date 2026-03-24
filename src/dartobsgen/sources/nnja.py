@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
@@ -486,10 +486,22 @@ class NNJASource(DataSource):
             )
 
         catalog = self._get_catalog()
+        from nnja_ai.exceptions import EmptyTimeSubsetError  # noqa: PLC0415
+
+        # Ensure datetimes are UTC-aware so NNJA doesn't warn about naive datetimes
+        if date0.tzinfo is None:
+            date0 = date0.replace(tzinfo=timezone.utc)
+        if date1.tzinfo is None:
+            date1 = date1.replace(tzinfo=timezone.utc)
+
         dart_frames: list[pd.DataFrame] = []
 
         for ds_name, type_entries in by_dataset.items():
-            nnja_sel = catalog[ds_name].sel(time=slice(date0, date1))
+            try:
+                nnja_sel = catalog[ds_name].sel(time=slice(date0, date1))
+            except EmptyTimeSubsetError:
+                print("No data in NNJA dataset", ds_name, "for window", date0, "to", date1)
+                continue
             df = nnja_sel.load_dataset(backend="pandas")
 
             # Spatial filter (post-load; NNJA has no parquet pushdown for lat/lon)
