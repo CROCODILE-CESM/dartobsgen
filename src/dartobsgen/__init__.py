@@ -3,6 +3,7 @@ from .generate import generate_obs_sequences
 from .sources.base import DataSource, ObsSeqSource
 from .sources.crocolake import CrocLakeSource
 from .sources.nnja import NNJASource
+from .sources.perfect_model import ObsNetworkEntry, PerfectModelSource
 from .spatial import (
     polygon_from_vertices,
     polygon_from_netcdf_vertices,
@@ -14,6 +15,8 @@ __all__ = [
     "ObsGenConfig",
     "CrocLakeSource",
     "NNJASource",
+    "ObsNetworkEntry",
+    "PerfectModelSource",
     "ObsSeqSource",
     "DataSource",
     "generate_obs_sequences",

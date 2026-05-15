@@ -53,10 +53,13 @@ dartobsgen/
         ├── __init__.py           # Public API
         ├── config.py             # ObsGenConfig dataclass
         ├── generate.py           # generate_obs_sequences(), _make_windows()
+        ├── spatial.py            # trim_obs_seq(), polygon helpers
         └── sources/
             ├── __init__.py
             ├── base.py           # DataSource ABC + ObsSeqSource stub
-            └── crocolake.py      # CrocLakeSource + DEFAULT_OBS_TYPE_MAP
+            ├── crocolake.py      # CrocLakeSource + DEFAULT_OBS_TYPE_MAP
+            ├── nnja.py           # NNJASource
+            └── perfect_model.py  # PerfectModelSource + ObsNetworkEntry
 ```
 
 ## Output file naming
@@ -314,6 +317,125 @@ source = NNJASource(
 |---|---|
 | `"gcp_nodd"` | NOAA Open Data Dissemination (default, open access) |
 | `"gcp_brightband"` | Brightband mirror |
+
+---
+
+## Synthetic observations via `perfect_model_obs`
+
+`PerfectModelSource` generates synthetic observations by running DART's
+`perfect_model_obs` executable.  For each assimilation window it:
+
+1. Builds a template `obs_seq.in` from a user-defined observing network.
+2. Patches `input.nml` with the obs_seq filenames and window time bounds.
+3. Runs `perfect_model_obs` in an isolated per-window directory.
+4. Returns the resulting `obs_seq.out` as the window's obs file.
+
+The caller uses it identically to `CrocLakeSource` or `NNJASource` — only
+the source object changes.
+
+### Prerequisites
+
+`dart_work_dir` must contain:
+
+- The compiled `perfect_model_obs` executable
+- A base `input.nml` with a `perfect_model_obs_nml` block (the source
+  patches only the obs_seq filenames and time-bound fields)
+- Any initial-conditions files referenced by `input.nml`
+
+This is the same directory structure used to run `perfect_model_obs` by hand.
+
+### Usage
+
+```python
+import datetime
+import numpy as np
+from dartobsgen import ObsGenConfig, ObsNetworkEntry, PerfectModelSource, generate_obs_sequences
+
+# Define the synthetic observing network.
+# Each entry is one observation location + type.
+lons = np.linspace(-180.0, 180.0, 40, endpoint=False)
+network = [
+    ObsNetworkEntry(
+        obs_type="RAW_STATE_VARIABLE",
+        lat=0.0,
+        lon=float(lon),
+        vertical=1.0,
+        vert_unit="level",
+        obs_err_var=1.0,
+    )
+    for lon in lons
+]
+
+config = ObsGenConfig(
+    start=datetime.datetime(2000, 1, 1),
+    end=datetime.datetime(2000, 1, 2),
+    lat_min=-90, lat_max=90,
+    lon_min=-180, lon_max=180,
+    obs_types=["RAW_STATE_VARIABLE"],
+    assimilation_frequency=datetime.timedelta(hours=6),
+    output_dir="./obs_output",
+)
+
+source = PerfectModelSource(
+    dart_work_dir="/path/to/DART/models/lorenz_96/work",
+    obs_network=network,
+)
+
+if __name__ == "__main__":
+    written = generate_obs_sequences(config, source, max_workers=1)
+    print(written)
+```
+
+### `ObsNetworkEntry` fields
+
+| Field | Type | Description |
+|---|---|---|
+| `obs_type` | `str` | DART obs type name, e.g. `"RAW_STATE_VARIABLE"`, `"TEMPERATURE"` |
+| `lat` | `float` | Latitude in degrees |
+| `lon` | `float` | Longitude in degrees (-180 to 180) |
+| `vertical` | `float` | Vertical coordinate value |
+| `vert_unit` | `str` | `"pressure (Pa)"`, `"height (m)"`, `"depth (m)"`, `"level"`, etc. |
+| `obs_err_var` | `float` | Observation error variance |
+| `time_offset` | `timedelta` | Offset from window `date0` (default `timedelta(0)`) |
+
+### Controlling observation time within a window
+
+By default all observations are placed at the window start (`date0`).
+Use `time_offset` to shift individual entries:
+
+```python
+import datetime
+
+# Obs at window start
+entry_start = ObsNetworkEntry(..., time_offset=datetime.timedelta(0))
+
+# Obs at 3 hours into a 6-hour window (window centre)
+entry_centre = ObsNetworkEntry(..., time_offset=datetime.timedelta(hours=3))
+```
+
+### Parallel execution
+
+Each window runs in its own subdirectory (`dart_work_dir/windows/{timestamp}/`)
+with symlinks back to the shared executable and initial-conditions files.
+This avoids file conflicts when `ProcessPoolExecutor` runs multiple windows
+simultaneously.
+
+Use `max_workers=1` when debugging, or when `perfect_model_obs` itself
+advances the model state (since state advancement must be sequential):
+
+```python
+written = generate_obs_sequences(config, source, max_workers=1)
+```
+
+### Model state note
+
+`perfect_model_obs` interpolates observations from the initial-conditions
+file specified in `input.nml`.  `PerfectModelSource` uses a single fixed
+initial-conditions file for the whole run, which is appropriate for
+Lorenz-type toy models or a frozen-truth scenario.  Time-advancing the model
+state between windows requires running `perfect_model_obs` sequentially and
+updating `input.nml` to point to the advanced state — this is outside the
+scope of this source.
 
 ---
 

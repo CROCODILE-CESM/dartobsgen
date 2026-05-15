@@ -21,6 +21,7 @@ dependencies = [
     "scikit-image",
     "scipy",
     "nnja-ai",
+    "f90nml",
 ]
 
 [tool.setuptools.packages.find]

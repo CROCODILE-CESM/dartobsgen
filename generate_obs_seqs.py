@@ -17,6 +17,8 @@ from dartobsgen import (
     CrocLakeSource,
     NNJASource,
     ObsGenConfig,
+    ObsNetworkEntry,
+    PerfectModelSource,
     generate_obs_sequences,
     polygon_from_netcdf_mask,
     polygon_from_netcdf_vertices,
@@ -141,6 +143,58 @@ def main() -> None:
     print(f"Done. {len(written)} file(s) written.")
     for path in written:
         print(f"  {path}")
+
+
+# ------------------------------------------------------------------
+# PerfectModelSource example (Lorenz 96)
+# ------------------------------------------------------------------
+# Prerequisites in DART_WORK_DIR:
+#   - compiled perfect_model_obs executable
+#   - input.nml with perfect_model_obs_nml block
+#   - perfect_input.nc  (initial conditions, referenced by input.nml)
+#
+# def main() -> None:
+#     """Generate synthetic Lorenz 96 obs via perfect_model_obs."""
+#
+#     DART_WORK_DIR = "/path/to/DART/models/lorenz_96/work"
+#
+#     # 40-point Lorenz 96 ring: evenly spaced, single level
+#     import numpy as np
+#     longitudes = np.linspace(-180.0, 180.0, 40, endpoint=False)
+#     network = [
+#         ObsNetworkEntry(
+#             obs_type="RAW_STATE_VARIABLE",
+#             lat=0.0,
+#             lon=float(lon),
+#             vertical=1.0,
+#             vert_unit="level",
+#             obs_err_var=1.0,
+#         )
+#         for lon in longitudes
+#     ]
+#
+#     config = ObsGenConfig(
+#         start=datetime.datetime(2000, 1, 1),
+#         end=datetime.datetime(2000, 1, 2),
+#         lat_min=-90.0,
+#         lat_max=90.0,
+#         lon_min=-180.0,
+#         lon_max=180.0,
+#         obs_types=["RAW_STATE_VARIABLE"],
+#         assimilation_frequency=datetime.timedelta(hours=6),
+#         output_dir=OUTPUT_DIR,
+#     )
+#
+#     source = PerfectModelSource(
+#         dart_work_dir=DART_WORK_DIR,
+#         obs_network=network,
+#     )
+#
+#     if __name__ == "__main__":
+#         written = generate_obs_sequences(config, source, max_workers=1)
+#         print(f"Done. {len(written)} file(s) written.")
+#         for path in written:
+#             print(f"  {path}")
 
 
 if __name__ == "__main__":
