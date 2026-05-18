@@ -33,7 +33,7 @@ class ObsNetworkEntry:
         Vertical coordinate value (units defined by ``vert_unit``).
     vert_unit : str
         Vertical coordinate unit string understood by DART, e.g.
-        ``"pressure (Pa)"``, ``"height (m)"``, ``"depth (m)"``.
+        ``"pressure (Pa)"``, ``"height (m)"``, ``"model level"``.
     obs_err_var : float
         Observation error variance (same units as the observed quantity,
         squared).
