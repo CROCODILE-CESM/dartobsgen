@@ -377,7 +377,7 @@ config = ObsGenConfig(
 )
 
 source = PerfectModelSource(
-    dart_work_dir="/path/to/DART/models/lorenz_96/work",
+    dart_work_dir="/path/to/DART/models/MOM6/work",
     obs_network=network,
 )
 

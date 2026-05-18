@@ -156,7 +156,7 @@ def main() -> None:
 # def main() -> None:
 #     """Generate synthetic Lorenz 96 obs via perfect_model_obs."""
 #
-#     DART_WORK_DIR = "/path/to/DART/models/lorenz_96/work"
+#     DART_WORK_DIR = "/path/to/DART/models/MOM6/work"
 #
 #     # 40-point Lorenz 96 ring: evenly spaced, single level
 #     import numpy as np
