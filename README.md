@@ -68,7 +68,7 @@ Files are named `{output_prefix}.{timestamp}.out` where the timestamp
 is formatted using `output_timestamp_format` (default: `"%Y-%m-%d-{S}"`).
 
 The special token `{S}` is replaced with **seconds-of-day** (0–86400,
-zero-padded to 5 digits), matching DART's standard obs_seq naming convention.
+zero-padded to 5 digits), following DART-CESM typical obs_seq naming convention.
 All other tokens follow Python `strftime` format.
 
 | Window start       | Default filename                    |
@@ -87,7 +87,7 @@ config = ObsGenConfig(..., output_timestamp_format="%Y%m%d%H")
 
 ## Observation types
 
-`obs_types` accepts three styles — they can be freely mixed:
+`obs_types` for CrocoLake as a source accepts three styles — they can be freely mixed:
 
 | Style | Example | Meaning |
 |---|---|---|
@@ -132,7 +132,7 @@ observations.  The last window may extend beyond `end` to keep all
 window widths uniform.
 
 `assimilation_frequency` accepts any `datetime.timedelta`, so sub-hourly
-windows are fully supported:
+windows are supported:
 
 ```python
 import datetime
@@ -238,7 +238,28 @@ A fast bounding-box pre-filter is applied before the exact polygon test.
 
 ---
 
-## NNJA data source
+## Adding a new data source
+
+Subclass `dartobsgen.DataSource` and implement `write_obs_seq()`:
+
+```python
+from dartobsgen import DataSource
+
+class MySource(DataSource):
+    def write_obs_seq(self, output_file, date0, date1,
+                      lat_min, lat_max, lon_min, lon_max,
+                      obs_types, obs_type_map) -> bool:
+        # fetch data, write output_file, return True if written
+        ...
+```
+
+`ObsSeqSource` in `dartobsgen.sources.base` is a pre-wired stub for
+a future data source backed by a bank of existing obs_seq files.
+
+
+---
+
+## Under development: NNJA data source
 
 `NNJASource` accesses the [NNJA-AI](https://github.com/brightbandtech/nnja-ai)
 cloud-hosted observation archive (NOAA/NASA Joint Archive) stored on GCS.
@@ -318,9 +339,11 @@ source = NNJASource(
 | `"gcp_nodd"` | NOAA Open Data Dissemination (default, open access) |
 | `"gcp_brightband"` | Brightband mirror |
 
+
+
 ---
 
-## Synthetic observations via `perfect_model_obs`
+## Under development:Synthetic observations via `perfect_model_obs`
 
 `PerfectModelSource` generates synthetic observations by running DART's
 `perfect_model_obs` executable.  For each assimilation window it:
@@ -344,48 +367,6 @@ the source object changes.
 
 This is the same directory structure used to run `perfect_model_obs` by hand.
 
-### Usage
-
-```python
-import datetime
-import numpy as np
-from dartobsgen import ObsGenConfig, ObsNetworkEntry, PerfectModelSource, generate_obs_sequences
-
-# Define the synthetic observing network.
-# Each entry is one observation location + type.
-lons = np.linspace(-180.0, 180.0, 40, endpoint=False)
-network = [
-    ObsNetworkEntry(
-        obs_type="RAW_STATE_VARIABLE",
-        lat=0.0,
-        lon=float(lon),
-        vertical=1.0,
-        vert_unit="level",
-        obs_err_var=1.0,
-    )
-    for lon in lons
-]
-
-config = ObsGenConfig(
-    start=datetime.datetime(2000, 1, 1),
-    end=datetime.datetime(2000, 1, 2),
-    lat_min=-90, lat_max=90,
-    lon_min=-180, lon_max=180,
-    obs_types=["RAW_STATE_VARIABLE"],
-    assimilation_frequency=datetime.timedelta(hours=6),
-    output_dir="./obs_output",
-)
-
-source = PerfectModelSource(
-    dart_work_dir="/path/to/DART/models/MOM6/work",
-    obs_network=network,
-)
-
-if __name__ == "__main__":
-    written = generate_obs_sequences(config, source, max_workers=1)
-    print(written)
-```
-
 ### `ObsNetworkEntry` fields
 
 | Field | Type | Description |
@@ -394,7 +375,7 @@ if __name__ == "__main__":
 | `lat` | `float` | Latitude in degrees |
 | `lon` | `float` | Longitude in degrees (-180 to 180) |
 | `vertical` | `float` | Vertical coordinate value |
-| `vert_unit` | `str` | `"pressure (Pa)"`, `"height (m)"`, `"depth (m)"`, `"level"`, etc. |
+| `vert_unit` | `str` | `"pressure (Pa)"`, `"height (m)"`, `"model level"`, `"surface (m)"` |
 | `obs_err_var` | `float` | Observation error variance |
 | `time_offset` | `timedelta` | Offset from window `date0` (default `timedelta(0)`) |
 
@@ -413,6 +394,13 @@ entry_start = ObsNetworkEntry(..., time_offset=datetime.timedelta(0))
 entry_centre = ObsNetworkEntry(..., time_offset=datetime.timedelta(hours=3))
 ```
 
+### MOM6 example
+
+`mom6_perfect_model.py` shows a complete ocean example: synthetic temperature
+and salinity profiles on a sparse lat/lon grid at six depths, run over a
+seven-day period with daily assimilation windows.
+
+
 ### Parallel execution
 
 Each window runs in its own subdirectory (`dart_work_dir/windows/{timestamp}/`)
@@ -427,32 +415,3 @@ advances the model state (since state advancement must be sequential):
 written = generate_obs_sequences(config, source, max_workers=1)
 ```
 
-### Model state note
-
-`perfect_model_obs` interpolates observations from the initial-conditions
-file specified in `input.nml`.  `PerfectModelSource` uses a single fixed
-initial-conditions file for the whole run, which is appropriate for
-Lorenz-type toy models or a frozen-truth scenario.  Time-advancing the model
-state between windows requires running `perfect_model_obs` sequentially and
-updating `input.nml` to point to the advanced state — this is outside the
-scope of this source.
-
----
-
-## Adding a new data source
-
-Subclass `dartobsgen.DataSource` and implement `write_obs_seq()`:
-
-```python
-from dartobsgen import DataSource
-
-class MySource(DataSource):
-    def write_obs_seq(self, output_file, date0, date1,
-                      lat_min, lat_max, lon_min, lon_max,
-                      obs_types, obs_type_map) -> bool:
-        # fetch data, write output_file, return True if written
-        ...
-```
-
-`ObsSeqSource` in `dartobsgen.sources.base` is a pre-wired stub for
-a future data source backed by a bank of existing obs_seq files.
