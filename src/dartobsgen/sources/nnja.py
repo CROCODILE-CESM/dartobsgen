@@ -152,7 +152,7 @@ def _make_dart_df(
         {
             "obs_num": 0,
             "observation": observation.to_numpy(dtype=float),
-            "DART_quality_control": 0.0,
+            "NNJA_quality_control": 0.0,
             "linked_list": "",
             "longitude": lon.to_numpy(dtype=float),
             "latitude": lat.to_numpy(dtype=float),
@@ -282,7 +282,7 @@ def _radiosonde_scalar_to_dart(
         {
             "obs_num": 0,
             "observation": melted["observation"].to_numpy(dtype=float),
-            "DART_quality_control": 0.0,
+            "NNJA_quality_control": 0.0,
             "linked_list": "",
             "longitude": melted["LON"].to_numpy(dtype=float),
             "latitude": melted["LAT"].to_numpy(dtype=float),
@@ -348,7 +348,7 @@ def _radiosonde_wind_to_dart(
                 {
                     "obs_num": 0,
                     "observation": obs_vals,
-                    "DART_quality_control": 0.0,
+                    "NNJA_quality_control": 0.0,
                     "linked_list": "",
                     "longitude": chunk["LON"].to_numpy(dtype=float),
                     "latitude": chunk["LAT"].to_numpy(dtype=float),
@@ -538,7 +538,7 @@ class NNJASource(DataSource):
         # Build and write obs_seq via pydartdiags
         ObsSequence = self._import_obs_sequence()
         obs_seq = ObsSequence(file=None)
-        obs_seq.qc_copie_names = ["DART_quality_control"]
+        obs_seq.qc_copie_names = ["NNJA_quality_control"]
         obs_seq.df = combined
         obs_seq.write_obs_seq(output_file)
         return True
