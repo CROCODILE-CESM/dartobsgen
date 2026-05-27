@@ -22,6 +22,7 @@ dependencies = [
     "scipy",
     "nnja-ai",
     "f90nml",
+    "gsw==3.6.19"
 ]
 
 [project.optional-dependencies]
