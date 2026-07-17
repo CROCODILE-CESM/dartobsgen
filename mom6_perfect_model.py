@@ -23,6 +23,8 @@ import datetime
 
 import numpy as np
 
+import os
+
 from dartobsgen import (
     MOM6StateProvider,
     ObsGenConfig,
@@ -30,22 +32,30 @@ from dartobsgen import (
     PerfectModelSource,
     generate_obs_sequences,
     polygon_from_netcdf_mask,
+    state_vars_from_nml,
     trim_obs_seq,
 )
 
-DART_WORK_DIR = "/Users/hkershaw/DART/Crocodile/Observations/dart_obs_gen/DART/models/MOM6/work"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+DART_WORK_DIR = os.path.join(_HERE, "pmo_run")
 OUTPUT_DIR = "./obs_output"
 
-# Restart-format MOM6 output: one multi-timeslice file or a glob of files.
-MODEL_OUTPUT = "/path/to/mom6_run/output/mom6.r.*.nc"
+# MOM6 output (restart or z-space history format, matching the
+# model_state_variables in input.nml): one multi-timeslice file or a glob.
+MODEL_OUTPUT = os.path.join(
+    _HERE,
+    "example_mom6/EEP_MITgcm185Lvgrid_Whitt2026hgrid.mom6.h.z.2015-10-004/mom6.h.nc",
+)
 STATE_CACHE_DIR = "./state_cache"
 
 # Argo-like profile depths in metres
 PROFILE_DEPTHS = [10.0, 50.0, 100.0, 200.0, 500.0, 1000.0]
 
-# Sparse lat/lon grid for synthetic profile locations
-LATS = np.arange(-60.0, 61.0, 20.0)
-LONS = np.arange(-160.0, 161.0, 30.0)
+# Sparse lat/lon grid for synthetic profile locations, inside the
+# Eastern Equatorial Pacific example domain (lat ±12, lon 190–265°E).
+LATS = np.arange(-10.0, 11.0, 4.0)
+LONS = np.arange(-165.0, -96.0, 10.0)
 
 
 def build_network() -> list[ObsNetworkEntry]:
@@ -54,20 +64,21 @@ def build_network() -> list[ObsNetworkEntry]:
         for lon in LONS:
             for depth in PROFILE_DEPTHS:
                 network.append(ObsNetworkEntry(
-                    obs_type="OCEAN_TEMPERATURE",
+                    obs_type="FLOAT_TEMPERATURE",
                     lat=float(lat),
                     lon=float(lon),
                     vertical=depth,
                     vert_unit="height (m)",
                     obs_err_var=0.04,   # (0.2 °C)²
                 ))
+                # DART salinity obs are kg/kg (model_mod converts from psu)
                 network.append(ObsNetworkEntry(
-                    obs_type="OCEAN_SALINITY",
+                    obs_type="FLOAT_SALINITY",
                     lat=float(lat),
                     lon=float(lon),
                     vertical=depth,
                     vert_unit="height (m)",
-                    obs_err_var=0.01,   # (0.1 PSU)²
+                    obs_err_var=1.0e-8,   # (0.0001 kg/kg = 0.1 psu)²
                 ))
     return network
 
@@ -79,19 +90,24 @@ def main() -> None:
           f"({n_profiles} locations × {len(PROFILE_DEPTHS)} depths × 2 variables)")
 
     config = ObsGenConfig(
-        start=datetime.datetime(2010, 1, 1),
-        end=datetime.datetime(2010, 1, 8),
-        lat_min=-90.0,
-        lat_max=90.0,
-        lon_min=-180.0,
-        lon_max=180.0,
-        obs_types=["OCEAN_TEMPERATURE", "OCEAN_SALINITY"],
+        start=datetime.datetime(2015, 10, 1),
+        end=datetime.datetime(2015, 10, 8),
+        lat_min=-12.0,
+        lat_max=12.0,
+        lon_min=-170.0,
+        lon_max=-95.0,
+        obs_types=["FLOAT_TEMPERATURE", "FLOAT_SALINITY"],
         assimilation_frequency=datetime.timedelta(hours=24),
         output_dir=OUTPUT_DIR,
         output_prefix="obs_seq",
     )
 
-    provider = MOM6StateProvider(MODEL_OUTPUT, cache_dir=STATE_CACHE_DIR)
+    # Validate the model output against exactly what DART will read.
+    provider = MOM6StateProvider(
+        MODEL_OUTPUT,
+        cache_dir=STATE_CACHE_DIR,
+        required_vars=state_vars_from_nml(os.path.join(DART_WORK_DIR, "input.nml")),
+    )
     source = PerfectModelSource(
         dart_work_dir=DART_WORK_DIR,
         obs_network=network,

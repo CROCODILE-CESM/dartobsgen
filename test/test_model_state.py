@@ -1,8 +1,8 @@
 """Tests for dartobsgen.model_state using tiny synthetic netCDF fixtures.
 
-No real MOM6 files are needed: fixtures build restart-shaped files
-(Temp, Salt, u, v, h with a Time dimension in days since 0001-01-01)
-on the fly in tmp_path.
+No real MOM6 files are needed: fixtures build MOM6-shaped files (restart
+style with 'Time', or history style with lowercase 'time' and diagnostic
+variable names, days since 0001-01-01) on the fly in tmp_path.
 """
 from __future__ import annotations
 
@@ -18,11 +18,13 @@ from dartobsgen.model_state import (
     _MOM6_DAYS_TO_DART_EPOCH,
     MOM6StateProvider,
     mom6_time_to_datetime,
+    state_vars_from_nml,
 )
 
 _EPOCH_YEAR1 = datetime(1, 1, 1)
 
 RESTART_VARS = ("Temp", "Salt", "u", "v", "h")
+HISTORY_VARS = ("thetao", "so", "uo", "vo")
 
 
 def raw_days(dt: datetime) -> float:
@@ -37,8 +39,9 @@ def make_mom6_file(
     calendar="gregorian",
     units="days since 0001-01-01 00:00:00",
     var_names=RESTART_VARS,
+    time_name="Time",
 ):
-    """Write a tiny restart-shaped netCDF file.
+    """Write a tiny MOM6-shaped netCDF file.
 
     Every variable's values equal the slice's time index, so tests can
     verify the correct slice was extracted.
@@ -47,7 +50,7 @@ def make_mom6_file(
     nt = len(raw_times)
     data_vars = {
         name: (
-            ("Time", "Layer", "lath", "lonh"),
+            (time_name, "Layer", "lath", "lonh"),
             np.array([np.full((nz, ny, nx), float(t)) for t in range(nt)]),
         )
         for name in var_names
@@ -55,8 +58,8 @@ def make_mom6_file(
     ds = xr.Dataset(
         data_vars,
         coords={
-            "Time": (
-                "Time",
+            time_name: (
+                time_name,
                 np.asarray(raw_times, dtype="f8"),
                 {"units": units, "calendar": calendar},
             )
@@ -73,11 +76,15 @@ class TestMom6TimeToDatetime:
         dt = datetime(2010, 1, 5)
         assert mom6_time_to_datetime(raw_days(dt)) == dt
 
-    def test_truncates_to_whole_days(self):
-        # read_model_time in DART's MOM6 model_mod does int(days): a slice
-        # stamped at noon is seen by DART as 00:00 of that day.
+    def test_preserves_time_of_day(self):
+        # read_model_time keeps the fractional day as seconds: a slice
+        # stamped at noon is seen by DART as 12:00 of that day.
         noon = datetime(2010, 1, 5, 12, 0, 0)
-        assert mom6_time_to_datetime(raw_days(noon)) == datetime(2010, 1, 5)
+        assert mom6_time_to_datetime(raw_days(noon)) == noon
+
+    def test_quarter_day_maps_to_six_hours(self):
+        six_am = datetime(2010, 1, 5, 6, 0, 0)
+        assert mom6_time_to_datetime(raw_days(six_am)) == six_am
 
 
 @pytest.fixture
@@ -121,8 +128,8 @@ class TestSliceSelection:
         state = provider.state_for_window(datetime(2010, 1, 2), datetime(2010, 1, 5))
         assert state.valid_time == datetime(2010, 1, 2)
 
-    def test_midday_stamps_map_to_truncated_time(self, tmp_path, cache_dir):
-        # daily means stamped at noon: DART truncates to 00Z of the same day
+    def test_midday_stamps_keep_time_of_day(self, tmp_path, cache_dir):
+        # daily means stamped at noon: DART sees 12:00 of the same day
         path = tmp_path / "midday.nc"
         make_mom6_file(
             path, [raw_days(datetime(2010, 1, d, 12)) for d in range(1, 4)]
@@ -130,9 +137,26 @@ class TestSliceSelection:
         provider = MOM6StateProvider(str(path), cache_dir=cache_dir)
         state = provider.state_for_window(datetime(2010, 1, 2), datetime(2010, 1, 3))
         assert state is not None
-        assert state.valid_time == datetime(2010, 1, 2)
+        assert state.valid_time == datetime(2010, 1, 2, 12)
         with xr.open_dataset(state.path, decode_times=False) as ds:
             assert float(ds["Temp"][0, 0, 0, 0]) == 1.0  # second slice
+
+    def test_history_style_file(self, tmp_path, cache_dir):
+        # z-space history output: lowercase 'time', diagnostic variable names
+        path = tmp_path / "mom6.h.nc"
+        make_mom6_file(
+            path,
+            [raw_days(datetime(2015, 10, d, 12)) for d in range(1, 4)],
+            var_names=HISTORY_VARS,
+            time_name="time",
+        )
+        provider = MOM6StateProvider(str(path), cache_dir=cache_dir)
+        state = provider.state_for_window(datetime(2015, 10, 2), datetime(2015, 10, 3))
+        assert state is not None
+        assert state.valid_time == datetime(2015, 10, 2, 12)
+        with xr.open_dataset(state.path, decode_times=False) as ds:
+            assert ds.sizes["time"] == 1
+            assert float(ds["thetao"][0, 0, 0, 0]) == 1.0  # second slice
 
 
 class TestExtractionCache:
@@ -167,23 +191,15 @@ class TestValidation:
         with pytest.raises(FileNotFoundError):
             MOM6StateProvider(str(tmp_path / "nope*.nc"), cache_dir=cache_dir)
 
-    def test_missing_restart_variable_raises(self, tmp_path, cache_dir):
+    def test_missing_required_variable_raises(self, tmp_path, cache_dir):
         path = tmp_path / "partial.nc"
         make_mom6_file(
             path, [raw_days(datetime(2010, 1, 1))], var_names=("Temp", "Salt")
         )
-        with pytest.raises(ValueError, match="missing restart variable"):
-            MOM6StateProvider(str(path), cache_dir=cache_dir)
+        with pytest.raises(ValueError, match="missing state variable"):
+            MOM6StateProvider(str(path), cache_dir=cache_dir, required_vars=RESTART_VARS)
 
-    def test_history_style_names_rejected(self, tmp_path, cache_dir):
-        path = tmp_path / "history.nc"
-        make_mom6_file(
-            path, [raw_days(datetime(2010, 1, 1))], var_names=("thetao", "so")
-        )
-        with pytest.raises(ValueError, match="history/diagnostic"):
-            MOM6StateProvider(str(path), cache_dir=cache_dir)
-
-    def test_custom_required_vars_accepted(self, tmp_path, cache_dir):
+    def test_required_vars_satisfied(self, tmp_path, cache_dir):
         path = tmp_path / "temp_salt_h.nc"
         make_mom6_file(
             path, [raw_days(datetime(2010, 1, 1))], var_names=("Temp", "Salt", "h")
@@ -194,6 +210,12 @@ class TestValidation:
         assert provider.state_for_window(
             datetime(2010, 1, 1), datetime(2010, 1, 2)
         ) is not None
+
+    def test_no_time_variable_raises(self, tmp_path, cache_dir):
+        path = tmp_path / "no_time.nc"
+        xr.Dataset({"Temp": (("z",), np.zeros(3))}).to_netcdf(path)
+        with pytest.raises(ValueError, match="variable"):
+            MOM6StateProvider(str(path), cache_dir=cache_dir)
 
     def test_noleap_calendar_rejected(self, tmp_path, cache_dir):
         path = tmp_path / "noleap.nc"
@@ -210,3 +232,17 @@ class TestValidation:
         )
         with pytest.raises(ValueError, match="Time units"):
             MOM6StateProvider(str(path), cache_dir=cache_dir)
+
+
+def test_state_vars_from_nml(tmp_path):
+    pytest.importorskip("f90nml")
+    nml = tmp_path / "input.nml"
+    nml.write_text(
+        "&model_nml\n"
+        "    model_state_variables = 'so ', 'QTY_SALINITY             ', 'NA', 'NA', 'UPDATE',\n"
+        "                            'thetao ', 'QTY_POTENTIAL_TEMPERATURE', 'NA', 'NA', 'UPDATE',\n"
+        "                            'uo    ', 'QTY_U_CURRENT_COMPONENT  ', 'NA', 'NA', 'UPDATE',\n"
+        "                            'vo    ', 'QTY_V_CURRENT_COMPONENT  ', 'NA', 'NA', 'UPDATE',\n"
+        "/\n"
+    )
+    assert state_vars_from_nml(str(nml)) == ("so", "thetao", "uo", "vo")

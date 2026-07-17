@@ -5,6 +5,7 @@ from .model_state import (
     ModelStateProvider,
     MOM6StateProvider,
     mom6_time_to_datetime,
+    state_vars_from_nml,
 )
 from .sources.base import DataSource, ObsSeqSource
 from .sources.crocolake import CrocLakeSource
@@ -29,6 +30,7 @@ __all__ = [
     "ModelStateProvider",
     "MOM6StateProvider",
     "mom6_time_to_datetime",
+    "state_vars_from_nml",
     "generate_obs_sequences",
     "polygon_from_vertices",
     "polygon_from_netcdf_vertices",

@@ -29,7 +29,8 @@ class ObsNetworkEntry:
     lat : float
         Latitude in degrees.
     lon : float
-        Longitude in degrees (-180 to 180).
+        Longitude in degrees (-180 to 180 or 0 to 360; written to the
+        obs_seq file wrapped to 0–360 as DART requires).
     vertical : float
         Vertical coordinate value (units defined by ``vert_unit``).
     vert_unit : str
@@ -55,6 +56,11 @@ class ObsNetworkEntry:
     time_offset: timedelta = field(default_factory=timedelta)
 
 
+def _tail(text: str, n: int) -> str:
+    """Return the last *n* lines of *text*."""
+    return "\n".join(text.splitlines()[-n:])
+
+
 def _datetime_to_dart_time(dt: datetime) -> tuple[int, int]:
     """Return ``(days, seconds)`` since the DART epoch (1601-01-01 00:00:00)."""
     delta = dt - _DART_EPOCH_PY
@@ -69,7 +75,8 @@ def _write_obs_seq_template(
     ``perfect_model_obs`` replaces the placeholder values (0.0) with
     forward-operator results from the model state.  The metadata — location,
     type, time, error variance — must be correct.  Each observation is placed
-    at ``ref_time + entry.time_offset``.
+    at ``ref_time + entry.time_offset``.  Longitudes are wrapped to the
+    0–360 range DART locations require.
     """
     from pydartdiags.obs_sequence.obs_sequence import ObsSequence  # noqa: PLC0415
 
@@ -83,7 +90,7 @@ def _write_obs_seq_template(
             "observation": 0.0,
             "DART_quality_control": 0.0,
             "linked_list": "",
-            "longitude": [e.lon for e in entries],
+            "longitude": [e.lon % 360.0 for e in entries],
             "latitude": [e.lat for e in entries],
             "vertical": [e.vertical for e in entries],
             "vert_unit": [e.vert_unit for e in entries],
@@ -281,10 +288,16 @@ class PerfectModelSource(DataSource):
                 text=True,
             )
             if result.returncode != 0:
-                print(
-                    f"perfect_model_obs failed for window {date0.isoformat()}:\n"
-                    f"{result.stderr}"
-                )
+                # DART reports fatal errors on stdout and in dart_log.out,
+                # not stderr; show all three before the window dir is removed.
+                print(f"perfect_model_obs failed for window {date0.isoformat()}:")
+                print(_tail(result.stdout, 20))
+                if result.stderr.strip():
+                    print(_tail(result.stderr, 20))
+                log_path = os.path.join(window_dir, "dart_log.out")
+                if os.path.exists(log_path):
+                    with open(log_path) as f:
+                        print(f"--- dart_log.out ---\n{_tail(f.read(), 20)}")
                 return False
 
             if not os.path.exists(obs_seq_out):

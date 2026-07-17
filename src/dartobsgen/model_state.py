@@ -13,6 +13,7 @@ model-agnostic.
 from __future__ import annotations
 
 import glob
+import math
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -26,9 +27,8 @@ _MOM6_DAYS_TO_DART_EPOCH = 584388
 
 _MOM6_TIME_EPOCH = "0001-01-01"
 
-# Restart-format variable names DART's MOM6 model_mod reads by default
-# (model_state_variables in input.nml).
-_MOM6_RESTART_VARS = ("Temp", "Salt", "u", "v", "h")
+# MOM6 restart files name the time variable 'Time'; history files use 'time'.
+_MOM6_TIME_VAR_NAMES = ("Time", "time")
 
 # Calendars whose day counts agree with DART's Gregorian calendar for
 # modern dates.  Anything else (noleap, julian, 360_day, ...) would shift
@@ -46,8 +46,8 @@ class ModelState:
         Path to a netCDF file holding exactly one timeslice, in the format
         the DART model interface reads (for MOM6: restart format).
     valid_time : datetime
-        The time DART will read from the file — i.e. after any truncation
-        the model_mod's ``read_model_time`` applies.  Synthetic observations
+        The time DART will read from the file, computed exactly as the
+        model_mod's ``read_model_time`` computes it.  Synthetic observations
         must be placed at (or near) this time because ``perfect_model_obs``
         cannot advance large models.
     """
@@ -71,36 +71,60 @@ class ModelStateProvider(ABC):
         """
 
 
+def state_vars_from_nml(nml_path: str) -> tuple[str, ...]:
+    """Return the netCDF variable names in ``model_nml``'s ``model_state_variables``.
+
+    ``model_state_variables`` is a flat list of 5-element records
+    ``(variable, quantity, min, max, update)``; this returns the first
+    element of each record.  Pass the result as ``required_vars`` to
+    :class:`MOM6StateProvider` so model output is validated against exactly
+    what DART will read.
+    """
+    import f90nml  # noqa: PLC0415
+
+    nml = f90nml.read(nml_path)
+    entries = nml["model_nml"]["model_state_variables"]
+    names = entries[0::5]
+    return tuple(str(v).strip() for v in names if v is not None and str(v).strip())
+
+
 def mom6_time_to_datetime(raw_days: float) -> datetime:
     """Convert a MOM6 ``Time`` value (days since 0001-01-01) to the datetime DART sees.
 
-    Mirrors ``read_model_time`` in DART's MOM6 ``model_mod.f90``: the day
-    count is truncated to whole days and seconds are discarded, so e.g. a
-    daily-mean slice stamped at noon maps to 00:00 of that day.
+    Mirrors ``read_model_time`` in DART's MOM6 ``model_mod.f90``: whole days
+    via ``floor``, the fractional day converted to seconds and truncated to
+    an integer.  A daily-mean slice stamped at noon therefore maps to 12:00.
     """
-    return _DART_EPOCH + timedelta(days=int(raw_days) - _MOM6_DAYS_TO_DART_EPOCH)
+    days = math.floor(raw_days)
+    seconds = int((raw_days - days) * 86400.0)
+    return _DART_EPOCH + timedelta(days=days - _MOM6_DAYS_TO_DART_EPOCH, seconds=seconds)
 
 
 class MOM6StateProvider(ModelStateProvider):
-    """Serve single-timeslice MOM6 states from restart-format model output.
+    """Serve single-timeslice MOM6 states from a run's model output.
+
+    Works with both restart-format output (``Temp``, ``Salt``, ... on native
+    layers) and z-space history output (``thetao``, ``so``, ... on ``z_l``
+    levels, supported by DART's MOM6 model_mod via ``use_pseudo_depth``) —
+    whatever matches ``model_state_variables`` in the run's ``input.nml``.
 
     Parameters
     ----------
     model_output : str or list[str]
-        Path, glob pattern, or explicit list of paths to MOM6 output in
-        restart format.  Files may hold one or many timeslices; the union of
-        all slices across all files forms the available states.
+        Path, glob pattern, or explicit list of paths to MOM6 output files.
+        Files may hold one or many timeslices; the union of all slices
+        across all files forms the available states.
     cache_dir : str
         Directory where extracted single-timeslice files are written
         (created on first use).  Extractions are cached by valid time, so
         reruns and parallel windows reuse existing slices.  Files that
         already hold a single timeslice are used in place, uncopied.
-    required_vars : tuple of str
-        Variables every input file must contain.  Defaults to the restart
-        names DART's MOM6 model_mod expects (``Temp``, ``Salt``, ``u``,
-        ``v``, ``h``).  History/diagnostic output (``thetao``, ``so``, ...)
-        is rejected; override only if ``model_state_variables`` in
-        ``input.nml`` was changed to match your file.
+    required_vars : tuple of str, optional
+        Variables every input file must contain; construction fails with a
+        clear message if any are absent.  Use
+        :func:`state_vars_from_nml` to take the list straight from
+        ``model_state_variables`` in ``input.nml``.  ``None`` (default)
+        skips the check.
 
     Notes
     -----
@@ -108,10 +132,10 @@ class MOM6StateProvider(ModelStateProvider):
     DART-visible time falls in ``[date0, date1)``.  Additional slices in the
     same window are ignored.
 
-    **Time handling** — DART truncates MOM6 times to whole days (see
-    :func:`mom6_time_to_datetime`), so selection and ``valid_time`` use the
-    truncated time, keeping observation placement consistent with what
-    ``perfect_model_obs`` computes.
+    **Time handling** — selection and ``valid_time`` use the time exactly as
+    DART's ``read_model_time`` computes it (see
+    :func:`mom6_time_to_datetime`), keeping observation placement consistent
+    with what ``perfect_model_obs`` computes.
 
     **Parallel safety** — extracted slices are written to a temporary name
     and moved into place atomically, so concurrent workers extracting the
@@ -122,7 +146,7 @@ class MOM6StateProvider(ModelStateProvider):
         self,
         model_output: str | list[str],
         cache_dir: str,
-        required_vars: tuple[str, ...] = _MOM6_RESTART_VARS,
+        required_vars: tuple[str, ...] | None = None,
     ):
         if isinstance(model_output, str):
             files = sorted(glob.glob(model_output))
@@ -137,9 +161,19 @@ class MOM6StateProvider(ModelStateProvider):
                 raise FileNotFoundError(f"model output file(s) not found: {missing}")
 
         self.cache_dir = os.path.abspath(cache_dir)
-        self.required_vars = tuple(required_vars)
+        self.required_vars = tuple(required_vars) if required_vars is not None else None
         # [(path, time_index, raw_days)], sorted by raw_days
         self._index = self._scan([os.path.abspath(f) for f in files])
+
+    @staticmethod
+    def _find_time_var(ds, path: str) -> str:
+        for name in _MOM6_TIME_VAR_NAMES:
+            if name in ds.variables:
+                return name
+        raise ValueError(
+            f"{path}: no {' or '.join(repr(n) for n in _MOM6_TIME_VAR_NAMES)} "
+            "variable; expected MOM6 model output"
+        )
 
     def _scan(self, files: list[str]) -> list[tuple[str, int, float]]:
         """Validate each file and index every timeslice it contains."""
@@ -149,21 +183,17 @@ class MOM6StateProvider(ModelStateProvider):
         index: list[tuple[str, int, float]] = []
         for path in files:
             with xr.open_dataset(path, decode_times=False) as ds:
-                if "Time" not in ds.variables:
-                    raise ValueError(
-                        f"{path}: no 'Time' variable; expected MOM6 "
-                        "restart-format output"
-                    )
-                self._check_time_metadata(dict(ds["Time"].attrs), path)
-                missing = [v for v in self.required_vars if v not in ds.variables]
-                if missing:
-                    raise ValueError(
-                        f"{path}: missing restart variable(s) {missing}. "
-                        "DART's MOM6 model_mod reads restart-format output "
-                        f"({', '.join(self.required_vars)} on native layers); "
-                        "history/diagnostic files are not supported."
-                    )
-                for i, raw in enumerate(np.atleast_1d(ds["Time"].values)):
+                time_var = self._find_time_var(ds, path)
+                self._check_time_metadata(dict(ds[time_var].attrs), path)
+                if self.required_vars is not None:
+                    missing = [v for v in self.required_vars if v not in ds.variables]
+                    if missing:
+                        raise ValueError(
+                            f"{path}: missing state variable(s) {missing}; "
+                            "the file does not match the expected "
+                            "model_state_variables."
+                        )
+                for i, raw in enumerate(np.atleast_1d(ds[time_var].values)):
                     index.append((path, i, float(raw)))
         index.sort(key=lambda entry: entry[2])
         return index
@@ -202,14 +232,15 @@ class MOM6StateProvider(ModelStateProvider):
             self.cache_dir, f"mom6_state_{valid_time:%Y%m%d_%H%M%S}.nc"
         )
         with xr.open_dataset(src_path, decode_times=False) as ds:
-            if ds.sizes.get("Time", 1) <= 1:
+            time_var = self._find_time_var(ds, src_path)
+            if ds.sizes.get(time_var, 1) <= 1:
                 return src_path  # already a single timeslice
             if os.path.exists(out):
                 return out
             os.makedirs(self.cache_dir, exist_ok=True)
             tmp = f"{out}.tmp.{os.getpid()}"
-            # isel with a list keeps Time as a size-1 dimension, so the
-            # slice keeps the structure of a real MOM6 restart file.
-            ds.isel(Time=[time_index]).to_netcdf(tmp)
+            # isel with a list keeps time as a size-1 dimension, so the
+            # slice keeps the structure of the original MOM6 file.
+            ds.isel({time_var: [time_index]}).to_netcdf(tmp)
         os.replace(tmp, out)
         return out
