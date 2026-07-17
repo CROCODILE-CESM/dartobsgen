@@ -18,6 +18,7 @@ dependencies = [
     "pandas",
     "shapely>=2.0",
     "xarray",
+    "netcdf4",
     "scikit-image",
     "scipy",
     "nnja-ai",

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
+from ..model_state import ModelState, ModelStateProvider
 from .base import DataSource
 
 _DART_EPOCH_PY = datetime(1601, 1, 1)
@@ -38,8 +39,11 @@ class ObsNetworkEntry:
         Observation error variance (same units as the observed quantity,
         squared).
     time_offset : timedelta
-        Offset from the window ``date0`` at which this observation is placed.
-        Default is ``timedelta(0)`` (start of window).
+        Offset from the window's reference time at which this observation is
+        placed.  The reference time is the window ``date0``, or the model
+        state's valid time when a ``state_provider`` is used (required
+        because ``perfect_model_obs`` cannot advance large models, so obs
+        must sit at the state time).  Default is ``timedelta(0)``.
     """
 
     obs_type: str
@@ -58,18 +62,19 @@ def _datetime_to_dart_time(dt: datetime) -> tuple[int, int]:
 
 
 def _write_obs_seq_template(
-    entries: list[ObsNetworkEntry], date0: datetime, output_path: str
+    entries: list[ObsNetworkEntry], ref_time: datetime, output_path: str
 ) -> None:
     """Write a template obs_seq.in with placeholder observation values.
 
     ``perfect_model_obs`` replaces the placeholder values (0.0) with
     forward-operator results from the model state.  The metadata — location,
-    type, time, error variance — must be correct.
+    type, time, error variance — must be correct.  Each observation is placed
+    at ``ref_time + entry.time_offset``.
     """
     from pydartdiags.obs_sequence.obs_sequence import ObsSequence  # noqa: PLC0415
 
     n = len(entries)
-    obs_times = [date0 + e.time_offset for e in entries]
+    obs_times = [ref_time + e.time_offset for e in entries]
     dart_times = [_datetime_to_dart_time(t) for t in obs_times]
 
     df = pd.DataFrame(
@@ -105,11 +110,15 @@ def _patch_input_nml(
     obs_seq_out: str,
     date0: datetime,
     date1: datetime,
+    input_state_files: str | None = None,
 ) -> None:
     """Write a patched ``input.nml`` for a single window.
 
     Only the ``perfect_model_obs_nml`` block is modified; all other namelist
-    groups are preserved verbatim.
+    groups are preserved verbatim.  When *input_state_files* is given, the
+    window reads its model state from that file (and
+    ``read_input_state_from_file`` is forced on); when ``None``, the state
+    settings in the base namelist are left untouched.
     """
     import f90nml  # noqa: PLC0415
 
@@ -125,6 +134,9 @@ def _patch_input_nml(
     block["first_obs_seconds"] = first_secs
     block["last_obs_days"] = last_days
     block["last_obs_seconds"] = last_secs
+    if input_state_files is not None:
+        block["read_input_state_from_file"] = True
+        block["input_state_files"] = input_state_files
     nml["perfect_model_obs_nml"] = block
 
     nml.write(dest_nml, force=True)
@@ -154,6 +166,13 @@ class PerfectModelSource(DataSource):
     perfect_model_obs_exe : str
         Name or path of the executable relative to the window directory.
         Default is ``"./perfect_model_obs"``.
+    state_provider : ModelStateProvider, optional
+        Maps each window to a single-timeslice model state file (e.g.
+        :class:`~dartobsgen.model_state.MOM6StateProvider` slicing the
+        output of a model run).  When given, each window's ``input.nml``
+        points ``input_state_files`` at that window's state, and observations
+        are placed at the state's valid time (plus each entry's
+        ``time_offset``).  Windows with no available state are skipped.
 
     Notes
     -----
@@ -161,11 +180,14 @@ class PerfectModelSource(DataSource):
     subdirectory, so multiple ``ProcessPoolExecutor`` workers can run
     simultaneously without file conflicts.
 
-    **Model state**: ``perfect_model_obs`` interpolates from the initial
-    conditions file specified in ``input.nml``.  This class assumes a single
-    fixed initial conditions file valid for the entire run (appropriate for
-    Lorenz-type models or a frozen-truth scenario).  Time-advancing the model
-    across windows requires additional coupling outside the scope of this source.
+    **Model state**: ``perfect_model_obs`` interpolates from the model state
+    file named in ``input.nml``.  Without a ``state_provider``, this class
+    assumes a single fixed initial-conditions file valid for the entire run
+    (appropriate for Lorenz-type models or a frozen-truth scenario).  With a
+    ``state_provider``, each window gets the model state valid at that
+    window's time.  ``perfect_model_obs`` cannot advance large models, so
+    observation times must sit at the state's valid time — hence the obs
+    reference time switches from window start to state valid time.
     """
 
     def __init__(
@@ -173,10 +195,12 @@ class PerfectModelSource(DataSource):
         dart_work_dir: str,
         obs_network: list[ObsNetworkEntry],
         perfect_model_obs_exe: str = "./perfect_model_obs",
+        state_provider: ModelStateProvider | None = None,
     ):
         self.dart_work_dir = os.path.abspath(dart_work_dir)
         self.obs_network = obs_network
         self.perfect_model_obs_exe = perfect_model_obs_exe
+        self.state_provider = state_provider
 
     def _setup_window_dir(self, window_dir: str) -> None:
         """Create *window_dir* and symlink shared files from ``dart_work_dir``."""
@@ -207,7 +231,8 @@ class PerfectModelSource(DataSource):
         -------
         bool
             ``True`` if ``perfect_model_obs`` ran successfully and
-            ``output_file`` was written; ``False`` otherwise.
+            ``output_file`` was written; ``False`` otherwise (including
+            windows with no observations or no model state).
         """
         active = [
             e for e in self.obs_network
@@ -217,6 +242,13 @@ class PerfectModelSource(DataSource):
         ]
         if not active:
             return False
+
+        state: ModelState | None = None
+        if self.state_provider is not None:
+            state = self.state_provider.state_for_window(date0, date1)
+            if state is None:
+                print(f"No model state for window {date0.isoformat()}; skipping.")
+                return False
 
         secs_of_day = date0.hour * 3600 + date0.minute * 60 + date0.second
         date_str = f"{date0.year:04d}-{date0.month:02d}-{date0.day:02d}-{secs_of_day:05d}"
@@ -228,9 +260,19 @@ class PerfectModelSource(DataSource):
         src_nml = os.path.join(self.dart_work_dir, "input.nml")
         dest_nml = os.path.join(window_dir, "input.nml")
 
+        ref_time = state.valid_time if state is not None else date0
+
         try:
-            _write_obs_seq_template(active, date0, obs_seq_in)
-            _patch_input_nml(src_nml, dest_nml, "obs_seq.in", "obs_seq.out", date0, date1)
+            _write_obs_seq_template(active, ref_time, obs_seq_in)
+            _patch_input_nml(
+                src_nml,
+                dest_nml,
+                "obs_seq.in",
+                "obs_seq.out",
+                date0,
+                date1,
+                input_state_files=state.path if state is not None else None,
+            )
 
             result = subprocess.run(
                 [self.perfect_model_obs_exe],

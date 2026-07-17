@@ -8,7 +8,13 @@ want people running in the source tree DART/models/MOM6/work.
 Prerequisites in DART_WORK_DIR:
   - Compiled perfect_model_obs executable
   - input.nml with a perfect_model_obs_nml block
-  - MOM6 IC/restart file referenced by input.nml
+  - mom6.r.nc (template_file), mom6.static.nc, ocean_geometry.nc
+    referenced by model_nml
+
+MODEL_OUTPUT points at restart-format output from a MOM6 run (a single
+multi-timeslice file, or a glob over per-time files).  Each assimilation
+window uses the earliest timeslice inside it; windows with no slice are
+skipped.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ import datetime
 import numpy as np
 
 from dartobsgen import (
+    MOM6StateProvider,
     ObsGenConfig,
     ObsNetworkEntry,
     PerfectModelSource,
@@ -28,6 +35,10 @@ from dartobsgen import (
 
 DART_WORK_DIR = "/Users/hkershaw/DART/Crocodile/Observations/dart_obs_gen/DART/models/MOM6/work"
 OUTPUT_DIR = "./obs_output"
+
+# Restart-format MOM6 output: one multi-timeslice file or a glob of files.
+MODEL_OUTPUT = "/path/to/mom6_run/output/mom6.r.*.nc"
+STATE_CACHE_DIR = "./state_cache"
 
 # Argo-like profile depths in metres
 PROFILE_DEPTHS = [10.0, 50.0, 100.0, 200.0, 500.0, 1000.0]
@@ -80,9 +91,11 @@ def main() -> None:
         output_prefix="obs_seq",
     )
 
+    provider = MOM6StateProvider(MODEL_OUTPUT, cache_dir=STATE_CACHE_DIR)
     source = PerfectModelSource(
         dart_work_dir=DART_WORK_DIR,
         obs_network=network,
+        state_provider=provider,
     )
 
     print(f"Writing obs_seq files to: {OUTPUT_DIR}")
