@@ -128,7 +128,7 @@ class CrocLakeSource(DataSource):
             ("LATITUDE",  ">", lat_min),  ("LATITUDE",  "<", lat_max),
             ("LONGITUDE", ">", lon_min),  ("LONGITUDE", "<", lon_max),
             ("PRES",      ">", -1e30),    ("PRES",      "<",  1e30),
-            ("JULD",      ">", date0),    ("JULD",      "<",  date1),
+            ("JULD",      "=>", date0),    ("JULD",      "<",  date1),
         ]
 
         # One filter group per unique crocolake_var.
