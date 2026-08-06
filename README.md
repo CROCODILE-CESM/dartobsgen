@@ -16,12 +16,12 @@ import datetime
 from dartobsgen import ObsGenConfig, CrocLakeSource, generate_obs_sequences
 
 config = ObsGenConfig(
-    start=datetime.datetime(2010, 5, 1),
-    end=datetime.datetime(2010, 5, 3),
+    start=datetime.datetime(2010, 5, 1),   # model run start; first analysis is 06Z
+    end=datetime.datetime(2010, 5, 3),     # last analysis time (inclusive)
     lat_min=5,   lat_max=60,
     lon_min=-100, lon_max=-30,
     obs_types=["ARGO_TEMPERATURE", "ARGO_SALINITY"],
-    assimilation_frequency=datetime.timedelta(hours=6),
+    assimilation_frequency=datetime.timedelta(hours=6), # assimilate every 6 hours
     output_dir="./obs_output",
 )
 
@@ -52,7 +52,7 @@ dartobsgen/
     └── dartobsgen/
         ├── __init__.py           # Public API
         ├── config.py             # ObsGenConfig dataclass
-        ├── generate.py           # generate_obs_sequences(), _make_windows()
+        ├── generate.py           # generate_obs_sequences(), _make_analysis_windows()
         ├── spatial.py            # trim_obs_seq(), polygon helpers
         └── sources/
             ├── __init__.py
@@ -65,18 +65,22 @@ dartobsgen/
 ## Output file naming
 
 Files are named `{output_prefix}.{timestamp}.out` where the timestamp
-is formatted using `output_timestamp_format` (default: `"%Y-%m-%d-{S}"`).
+is formatted using `output_timestamp_format` (default: `"%Y-%m-%d-{S}"`)
+and applied to the **analysis time** — the centre of the window, which is
+also the model's stopping time. This a DART convention, `filter` assimilates 
+the observations in a window centered on the analysis time, so the observation
+sequence file is named `obs_seq.$analysis_time`.
 
 The special token `{S}` is replaced with **seconds-of-day** (0–86400,
 zero-padded to 5 digits), following DART-CESM typical obs_seq naming convention.
 All other tokens follow Python `strftime` format.
 
-| Window start       | Default filename                    |
-|--------------------|-------------------------------------|
-| 2010-05-01 00:00   | `obs_seq.2010-05-01-00000.out`      |
-| 2010-05-01 06:00   | `obs_seq.2010-05-01-21600.out`      |
-| 2010-05-01 12:00   | `obs_seq.2010-05-01-43200.out`      |
-| 2010-05-01 18:00   | `obs_seq.2010-05-01-64800.out`      |
+| Analysis time      | Window                          | Default filename               |
+|--------------------|---------------------------------|--------------------------------|
+| 2010-05-01 06:00   | (03:00, 09:00]                  | `obs_seq.2010-05-01-21600.out` |
+| 2010-05-01 12:00   | (09:00, 15:00]                  | `obs_seq.2010-05-01-43200.out` |
+| 2010-05-01 18:00   | (15:00, 21:00]                  | `obs_seq.2010-05-01-64800.out` |
+| 2010-05-02 00:00   | (05-01 21:00, 05-02 03:00]      | `obs_seq.2010-05-02-00000.out` |
 
 To use a custom format (e.g. DART's compact `YYYYMMDDHH`):
 
@@ -127,23 +131,43 @@ config = ObsGenConfig(..., obs_type_map=my_map)
 
 ## Time windows
 
-Windows are half-open: `[t0, t0 + freq)`.  Adjacent windows share no
-observations.  The last window may extend beyond `end` to keep all
-window widths uniform.
+`start` is the **start of the model run, not the first analysis time.** In
+CESM+DART cycling the model advances one assimilation period before the first
+assimilation, so analysis times are `start + freq`, `start + 2*freq`, … up to
+and including `end`.
 
-`assimilation_frequency` accepts any `datetime.timedelta`, so sub-hourly
-windows are supported:
+Each analysis time `T` gets the window `(T - freq/2, T + freq/2]` — open
+below, closed above. This matches DART's documented convention (see
+`assimilation_code/programs/obs_sequence_tool/obs_sequence_tool.rst`):
+*"the windows should be centered around the assimilation time starting at
+minus 1/2 the window time plus 1 second, and ending at exactly plus 1/2 the
+window time."*
+
+Windows are contiguous and non-overlapping. Adjacent windows share a boundary
+instant, and the closed upper bound assigns it to the earlier window, so no
+observation is ever written to two files. Note that observations in
+`[start, start + freq/2]` are deliberately unused — they belong to the
+analysis at `start`, which happened before this run began.
+
+`assimilation_frequency` accepts any `datetime.timedelta` that is an even
+whole number of seconds (so that the half-width `freq/2` lands on an integer
+second, since DART times are integer day/second pairs). Sub-hourly windows are
+supported:
 
 ```python
 import datetime
 from dartobsgen import ObsGenConfig
 
-# 6-hour windows (default)
+# 6-hour windows (default): analyses at 06Z, 12Z, 18Z, 00Z
 config = ObsGenConfig(..., assimilation_frequency=datetime.timedelta(hours=6))
 
 # 30-minute windows
 config = ObsGenConfig(..., assimilation_frequency=datetime.timedelta(minutes=30))
 ```
+
+To land on conventional analysis times, set `start` one frequency before the
+first one you want: for analyses at 06Z/12Z/18Z/00Z with 6-hour windows, use
+`start=datetime.datetime(2010, 5, 1)` (00Z).
 
 ## Parallel generation
 
@@ -246,12 +270,19 @@ Subclass `dartobsgen.DataSource` and implement `write_obs_seq()`:
 from dartobsgen import DataSource
 
 class MySource(DataSource):
-    def write_obs_seq(self, output_file, date0, date1,
+    def write_obs_seq(self, output_file, analysis_time, date0, date1,
                       lat_min, lat_max, lon_min, lon_max,
                       obs_types, obs_type_map) -> bool:
         # fetch data, write output_file, return True if written
         ...
 ```
+
+`analysis_time` is the cycle time `T` the window is centered on, and the time
+`output_file` is named for. `date0`/`date1` bound the window `(date0, date1]`
+— exclusive below, inclusive above. Sources that read timestamps from a
+database (`CrocLakeSource`, `NNJASource`) only need the bounds; sources that
+*place* observations themselves (`PerfectModelSource`) should position them
+relative to `analysis_time`, since `date0` itself is outside the window.
 
 `ObsSeqSource` in `dartobsgen.sources.base` is a pre-wired stub for
 a future data source backed by a bank of existing obs_seq files.
@@ -377,21 +408,23 @@ This is the same directory structure used to run `perfect_model_obs` by hand.
 | `vertical` | `float` | Vertical coordinate value |
 | `vert_unit` | `str` | `"pressure (Pa)"`, `"height (m)"`, `"model level"`, `"surface (m)"` |
 | `obs_err_var` | `float` | Observation error variance |
-| `time_offset` | `timedelta` | Offset from window `date0` (default `timedelta(0)`) |
+| `time_offset` | `timedelta` | Offset from the analysis time (default `timedelta(0)`) |
 
 ### Controlling observation time within a window
 
-By default all observations are placed at the window start (`date0`).
-Use `time_offset` to shift individual entries:
+By default all observations are placed at the **analysis time** — the centre
+of the window. Use `time_offset` to shift individual entries; it must stay
+within `(-freq/2, +freq/2]` or `perfect_model_obs` will reject the
+observation as outside the window.
 
 ```python
 import datetime
 
-# Obs at window start
-entry_start = ObsNetworkEntry(..., time_offset=datetime.timedelta(0))
+# Obs at the analysis time / window centre (default)
+entry_centre = ObsNetworkEntry(..., time_offset=datetime.timedelta(0))
 
-# Obs at 3 hours into a 6-hour window (window centre)
-entry_centre = ObsNetworkEntry(..., time_offset=datetime.timedelta(hours=3))
+# Obs 1 hour after the analysis time
+entry_late = ObsNetworkEntry(..., time_offset=datetime.timedelta(hours=1))
 ```
 
 ### MOM6 example

@@ -5,8 +5,9 @@ Run from the dart_obs_gen directory after installing the package:
     pip install -e .
     python generate_obs_seqs.py
 
-Output files are written to ./obs_output/ and named using 
-the default convention, e.g. obs_seq.2010-05-01-00000.out
+Output files are written to ./obs_output/ and named for the analysis time
+using the default convention, e.g. obs_seq.2010-05-01-21600.out
+(the 06Z analysis, holding observations in (03Z, 09Z]).
 """
 
 from __future__ import annotations
@@ -48,6 +49,8 @@ requested_obs = ["ARGO_TEMPERATURE",
 
 def main() -> None:
     config = ObsGenConfig(
+        # start is the model run start; the first analysis is one frequency
+        # later (06Z), and end is the last analysis time (inclusive).
         start=datetime.datetime(2010, 5, 1),
         end=datetime.datetime(2010, 5, 3),
         lat_min=5.0,

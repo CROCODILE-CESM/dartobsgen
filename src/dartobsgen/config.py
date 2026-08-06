@@ -8,12 +8,19 @@ from datetime import datetime, timedelta
 class ObsGenConfig:
     """Configuration for a dartobsgen run.
 
+    Analysis times run from ``start + assimilation_frequency`` through ``end``
+    inclusive.  Each analysis time ``T`` produces one obs_seq file named for
+    ``T`` and holding the observations in ``(T - freq/2, T + freq/2]``, which
+    is DART's convention.
+
     Parameters
     ----------
     start : datetime
-        Start of the total time range (inclusive).
+        Start of the **model run** — not the first analysis time.  The model
+        advances one assimilation period before the first assimilation, so
+        the first analysis time is ``start + assimilation_frequency``.
     end : datetime
-        End of the total time range (exclusive).
+        Last analysis time (inclusive).
     lat_min, lat_max : float
         Latitude bounds in degrees.
     lon_min, lon_max : float
@@ -24,14 +31,17 @@ class ObsGenConfig:
         (e.g. ``"TEMPERATURE"``), or CrocoLake variable names
         (e.g. ``"TEMP"``).
     assimilation_frequency : timedelta
-        Width of each assimilation window.  Default ``timedelta(hours=6)``.
+        Width of each assimilation window, and the spacing between analysis
+        times.  Must be an even whole number of seconds so the half-width
+        lands on an integer second.  Default ``timedelta(hours=6)``.
     output_dir : str
         Directory where obs_seq files are written.  Created if absent.
     output_prefix : str
         Filename prefix.  Files are named
         ``{output_prefix}.{timestamp}.out``.
     output_timestamp_format : str
-        Format string for the timestamp portion of the filename.
+        Format string for the timestamp portion of the filename, applied to
+        the **analysis time**.
         Supports all Python ``strftime`` codes **and** the special
         token ``{S}`` which is replaced with the zero-padded
         seconds-of-day (00000–86400), matching DART's naming convention.

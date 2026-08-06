@@ -436,6 +436,7 @@ class NNJASource(DataSource):
     def write_obs_seq(
         self,
         output_file: str,
+        analysis_time: datetime,
         date0: datetime,
         date1: datetime,
         lat_min: float,
@@ -451,8 +452,11 @@ class NNJASource(DataSource):
         ----------
         output_file : str
             Path to write the DART obs_seq file.
+        analysis_time : datetime
+            Cycle time this window is centered on.  Unused — observation
+            times come from the archive's ``OBS_TIMESTAMP``.
         date0, date1 : datetime
-            Half-open time window ``[date0, date1)``.
+            Time window ``(date0, date1]`` — open below, closed above.
         lat_min, lat_max, lon_min, lon_max : float
             Bounding box for spatial subsetting (degrees).
         obs_types : list[str]
@@ -466,6 +470,8 @@ class NNJASource(DataSource):
             ``True`` if the file was written, ``False`` if no observations
             were found for this window.
         """
+        del analysis_time  # obs times come from OBS_TIMESTAMP, not the cycle time
+
         # Build effective map: defaults → source-level extras → call-level overrides
         eff_map: dict[str, dict] = {
             **DEFAULT_OBS_TYPE_MAP,
@@ -494,6 +500,12 @@ class NNJASource(DataSource):
         if date1.tzinfo is None:
             date1 = date1.replace(tzinfo=timezone.utc)
 
+        # Naive-UTC copy of the exclusive lower bound, for the post-load trim
+        # below.  ``.sel(time=slice(...))`` is inclusive on BOTH ends, so
+        # without this an obs landing exactly on date0 would also be emitted
+        # into the previous window's file.
+        date0_naive = date0.astimezone(timezone.utc).replace(tzinfo=None)
+
         dart_frames: list[pd.DataFrame] = []
 
         for ds_name, type_entries in by_dataset.items():
@@ -503,6 +515,12 @@ class NNJASource(DataSource):
                 print("No data in NNJA dataset", ds_name, "for window", date0, "to", date1)
                 continue
             df = nnja_sel.load_dataset(backend="pandas")
+
+            # Drop the closed lower edge that .sel(slice) includes, making the
+            # window (date0, date1] to match the other sources.
+            df = df[_naive_utc(df["OBS_TIMESTAMP"]) > date0_naive]
+            if df.empty:
+                continue
 
             # Spatial filter (post-load; NNJA has no parquet pushdown for lat/lon)
             df = df[

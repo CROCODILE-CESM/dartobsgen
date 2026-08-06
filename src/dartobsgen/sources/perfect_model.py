@@ -38,8 +38,11 @@ class ObsNetworkEntry:
         Observation error variance (same units as the observed quantity,
         squared).
     time_offset : timedelta
-        Offset from the window ``date0`` at which this observation is placed.
-        Default is ``timedelta(0)`` (start of window).
+        Offset from the cycle's ``analysis_time`` at which this observation is
+        placed.  Default is ``timedelta(0)`` — exactly at the analysis time,
+        i.e. the centre of the window.  Must stay within
+        ``(-freq/2, +freq/2]`` or ``perfect_model_obs`` will reject the
+        observation as outside the window.
     """
 
     obs_type: str
@@ -58,18 +61,22 @@ def _datetime_to_dart_time(dt: datetime) -> tuple[int, int]:
 
 
 def _write_obs_seq_template(
-    entries: list[ObsNetworkEntry], date0: datetime, output_path: str
+    entries: list[ObsNetworkEntry], analysis_time: datetime, output_path: str
 ) -> None:
     """Write a template obs_seq.in with placeholder observation values.
 
     ``perfect_model_obs`` replaces the placeholder values (0.0) with
     forward-operator results from the model state.  The metadata — location,
     type, time, error variance — must be correct.
+
+    Observations are placed at ``analysis_time + entry.time_offset``, so the
+    default offset of zero puts them at the centre of the window rather than
+    on its exclusive lower edge (where they would be filtered out).
     """
     from pydartdiags.obs_sequence.obs_sequence import ObsSequence  # noqa: PLC0415
 
     n = len(entries)
-    obs_times = [date0 + e.time_offset for e in entries]
+    obs_times = [analysis_time + e.time_offset for e in entries]
     dart_times = [_datetime_to_dart_time(t) for t in obs_times]
 
     df = pd.DataFrame(
@@ -110,13 +117,18 @@ def _patch_input_nml(
 
     Only the ``perfect_model_obs_nml`` block is modified; all other namelist
     groups are preserved verbatim.
+
+    The window ``(date0, date1]`` is expressed in DART's integer-second form
+    as ``first_obs = date0 + 1s`` and ``last_obs = date1``, which is exactly
+    the convention documented in ``obs_sequence_tool.rst``: start at minus
+    half the window plus one second, end at exactly plus half the window.
     """
     import f90nml  # noqa: PLC0415
 
     nml = f90nml.read(src_nml)
 
-    first_days, first_secs = _datetime_to_dart_time(date0)
-    last_days, last_secs = _datetime_to_dart_time(date1 - timedelta(seconds=1))
+    first_days, first_secs = _datetime_to_dart_time(date0 + timedelta(seconds=1))
+    last_days, last_secs = _datetime_to_dart_time(date1)
 
     block = nml.get("perfect_model_obs_nml", {})
     block["obs_seq_in_file_name"] = obs_seq_in
@@ -192,6 +204,7 @@ class PerfectModelSource(DataSource):
     def write_obs_seq(
         self,
         output_file: str,
+        analysis_time: datetime,
         date0: datetime,
         date1: datetime,
         lat_min: float,
@@ -202,6 +215,9 @@ class PerfectModelSource(DataSource):
         obs_type_map: dict | None,
     ) -> bool:
         """Generate synthetic obs for one window via ``perfect_model_obs``.
+
+        Network entries are placed at ``analysis_time + entry.time_offset``
+        and the window ``(date0, date1]`` bounds the namelist's obs times.
 
         Returns
         -------
@@ -218,8 +234,11 @@ class PerfectModelSource(DataSource):
         if not active:
             return False
 
-        secs_of_day = date0.hour * 3600 + date0.minute * 60 + date0.second
-        date_str = f"{date0.year:04d}-{date0.month:02d}-{date0.day:02d}-{secs_of_day:05d}"
+        # Name the scratch dir for the analysis time, so it matches the output
+        # filename rather than the window's lower edge.
+        t = analysis_time
+        secs_of_day = t.hour * 3600 + t.minute * 60 + t.second
+        date_str = f"{t.year:04d}-{t.month:02d}-{t.day:02d}-{secs_of_day:05d}"
         window_dir = os.path.join(self.dart_work_dir, "windows", date_str)
         self._setup_window_dir(window_dir)
 
@@ -229,7 +248,7 @@ class PerfectModelSource(DataSource):
         dest_nml = os.path.join(window_dir, "input.nml")
 
         try:
-            _write_obs_seq_template(active, date0, obs_seq_in)
+            _write_obs_seq_template(active, analysis_time, obs_seq_in)
             _patch_input_nml(src_nml, dest_nml, "obs_seq.in", "obs_seq.out", date0, date1)
 
             result = subprocess.run(
@@ -240,8 +259,8 @@ class PerfectModelSource(DataSource):
             )
             if result.returncode != 0:
                 print(
-                    f"perfect_model_obs failed for window {date0.isoformat()}:\n"
-                    f"{result.stderr}"
+                    f"perfect_model_obs failed for analysis time "
+                    f"{analysis_time.isoformat()}:\n{result.stderr}"
                 )
                 return False
 

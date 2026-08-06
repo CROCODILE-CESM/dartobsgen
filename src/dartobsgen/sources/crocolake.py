@@ -85,6 +85,7 @@ class CrocLakeSource(DataSource):
     def write_obs_seq(
         self,
         output_file: str,
+        analysis_time: datetime,
         date0: datetime,
         date1: datetime,
         lat_min: float,
@@ -96,9 +97,14 @@ class CrocLakeSource(DataSource):
     ) -> bool:
         """Build filters from obs_types, query CrocoLake, write obs_seq file.
 
+        Observation times come from the database, so *analysis_time* is
+        unused here — the window bounds carry all the timing information.
+
         Returns True if the file was written, False if no observations
         were found for this window.
         """
+        del analysis_time  # obs times come from JULD, not from the cycle time
+
         effective_map = {**DEFAULT_OBS_TYPE_MAP, **(obs_type_map or {})}
 
         # Resolve obs_types → (crocolake_var, db_name) pairs
@@ -123,12 +129,15 @@ class CrocLakeSource(DataSource):
                 if col not in selected_vars:
                     selected_vars.append(col)
 
-        # Base spatial + temporal filters (half-open window: JULD > date0, JULD < date1)
+        # Base spatial + temporal filters.
+        # Window is (date0, date1] — open below, closed above — so an obs
+        # landing exactly on a cycle boundary belongs to the earlier window
+        # only, and adjacent files never share an observation.
         base_filters = [
-            ("LATITUDE",  ">", lat_min),  ("LATITUDE",  "<", lat_max),
-            ("LONGITUDE", ">", lon_min),  ("LONGITUDE", "<", lon_max),
+            ("LATITUDE",  ">", lat_min),  ("LATITUDE",  "<",  lat_max),
+            ("LONGITUDE", ">", lon_min),  ("LONGITUDE", "<",  lon_max),
             ("PRES",      ">", -1e30),    ("PRES",      "<",  1e30),
-            ("JULD",      "=>", date0),    ("JULD",      "<",  date1),
+            ("JULD",      ">", date0),    ("JULD",      "<=", date1),
         ]
 
         # One filter group per unique crocolake_var.
