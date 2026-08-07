@@ -41,10 +41,13 @@ class ObsNetworkEntry:
         squared).
     time_offset : timedelta
         Offset from the window's reference time at which this observation is
-        placed.  The reference time is the window ``date0``, or the model
-        state's valid time when a ``state_provider`` is used (required
-        because ``perfect_model_obs`` cannot advance large models, so obs
-        must sit at the state time).  Default is ``timedelta(0)``.
+        placed.  The reference time is the cycle's ``analysis_time`` (the
+        centre of the window), or the model state's valid time when a
+        ``state_provider`` is used (required because ``perfect_model_obs``
+        cannot advance large models, so obs must sit at the state time).
+        Default is ``timedelta(0)``.  Must stay within ``(-freq/2, +freq/2]``
+        or ``perfect_model_obs`` will reject the observation as outside the
+        window.
     """
 
     obs_type: str
@@ -75,8 +78,11 @@ def _write_obs_seq_template(
     ``perfect_model_obs`` replaces the placeholder values (0.0) with
     forward-operator results from the model state.  The metadata — location,
     type, time, error variance — must be correct.  Each observation is placed
-    at ``ref_time + entry.time_offset``.  Longitudes are wrapped to the
-    0–360 range DART locations require.
+    at ``ref_time + entry.time_offset`` — the analysis time (window centre)
+    by default, or the model state's valid time when a ``state_provider`` is
+    used, so the default offset of zero avoids landing on the window's
+    exclusive lower edge.  Longitudes are wrapped to the 0–360 range DART
+    locations require.
     """
     from pydartdiags.obs_sequence.obs_sequence import ObsSequence  # noqa: PLC0415
 
@@ -126,13 +132,18 @@ def _patch_input_nml(
     window reads its model state from that file (and
     ``read_input_state_from_file`` is forced on); when ``None``, the state
     settings in the base namelist are left untouched.
+
+    The window ``(date0, date1]`` is expressed in DART's integer-second form
+    as ``first_obs = date0 + 1s`` and ``last_obs = date1``, which is exactly
+    the convention documented in ``obs_sequence_tool.rst``: start at minus
+    half the window plus one second, end at exactly plus half the window.
     """
     import f90nml  # noqa: PLC0415
 
     nml = f90nml.read(src_nml)
 
-    first_days, first_secs = _datetime_to_dart_time(date0)
-    last_days, last_secs = _datetime_to_dart_time(date1 - timedelta(seconds=1))
+    first_days, first_secs = _datetime_to_dart_time(date0 + timedelta(seconds=1))
+    last_days, last_secs = _datetime_to_dart_time(date1)
 
     block = nml.get("perfect_model_obs_nml", {})
     block["obs_seq_in_file_name"] = obs_seq_in
@@ -194,7 +205,7 @@ class PerfectModelSource(DataSource):
     ``state_provider``, each window gets the model state valid at that
     window's time.  ``perfect_model_obs`` cannot advance large models, so
     observation times must sit at the state's valid time — hence the obs
-    reference time switches from window start to state valid time.
+    reference time switches from analysis time to state valid time.
     """
 
     def __init__(
@@ -223,6 +234,7 @@ class PerfectModelSource(DataSource):
     def write_obs_seq(
         self,
         output_file: str,
+        analysis_time: datetime,
         date0: datetime,
         date1: datetime,
         lat_min: float,
@@ -233,6 +245,9 @@ class PerfectModelSource(DataSource):
         obs_type_map: dict | None,
     ) -> bool:
         """Generate synthetic obs for one window via ``perfect_model_obs``.
+
+        Network entries are placed at ``analysis_time + entry.time_offset``
+        and the window ``(date0, date1]`` bounds the namelist's obs times.
 
         Returns
         -------
@@ -257,8 +272,11 @@ class PerfectModelSource(DataSource):
                 print(f"No model state for window {date0.isoformat()}; skipping.")
                 return False
 
-        secs_of_day = date0.hour * 3600 + date0.minute * 60 + date0.second
-        date_str = f"{date0.year:04d}-{date0.month:02d}-{date0.day:02d}-{secs_of_day:05d}"
+        # Name the scratch dir for the analysis time, so it matches the output
+        # filename rather than the window's lower edge.
+        t = analysis_time
+        secs_of_day = t.hour * 3600 + t.minute * 60 + t.second
+        date_str = f"{t.year:04d}-{t.month:02d}-{t.day:02d}-{secs_of_day:05d}"
         window_dir = os.path.join(self.dart_work_dir, "windows", date_str)
         self._setup_window_dir(window_dir)
 
@@ -267,7 +285,7 @@ class PerfectModelSource(DataSource):
         src_nml = os.path.join(self.dart_work_dir, "input.nml")
         dest_nml = os.path.join(window_dir, "input.nml")
 
-        ref_time = state.valid_time if state is not None else date0
+        ref_time = state.valid_time if state is not None else analysis_time
 
         try:
             _write_obs_seq_template(active, ref_time, obs_seq_in)
@@ -290,7 +308,7 @@ class PerfectModelSource(DataSource):
             if result.returncode != 0:
                 # DART reports fatal errors on stdout and in dart_log.out,
                 # not stderr; show all three before the window dir is removed.
-                print(f"perfect_model_obs failed for window {date0.isoformat()}:")
+                print(f"perfect_model_obs failed for analysis time {analysis_time.isoformat()}:")
                 print(_tail(result.stdout, 20))
                 if result.stderr.strip():
                     print(_tail(result.stderr, 20))

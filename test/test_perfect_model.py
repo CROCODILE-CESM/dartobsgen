@@ -74,11 +74,13 @@ def test_patch_sets_window_bounds(src_nml, tmp_path):
     nml = _patch(src_nml, tmp_path)
     block = nml["perfect_model_obs_nml"]
     days_2010_01_02 = (datetime(2010, 1, 2) - datetime(1601, 1, 1)).days
+    days_2010_01_03 = (datetime(2010, 1, 3) - datetime(1601, 1, 1)).days
+    # first obs time is one second after the (exclusive) window start
     assert block["first_obs_days"] == days_2010_01_02
-    assert block["first_obs_seconds"] == 0
-    # last obs time is one second before the (exclusive) window end
-    assert block["last_obs_days"] == days_2010_01_02
-    assert block["last_obs_seconds"] == 86399
+    assert block["first_obs_seconds"] == 1
+    # last obs time is exactly the (inclusive) window end
+    assert block["last_obs_days"] == days_2010_01_03
+    assert block["last_obs_seconds"] == 0
 
 
 class _NoStateProvider(ModelStateProvider):
@@ -105,6 +107,7 @@ def test_write_obs_seq_skips_window_without_state(tmp_path):
     )
     written = source.write_obs_seq(
         output_file=str(tmp_path / "obs_seq.out"),
+        analysis_time=datetime(2010, 1, 1, 12),
         date0=datetime(2010, 1, 1),
         date1=datetime(2010, 1, 2),
         lat_min=-90.0,

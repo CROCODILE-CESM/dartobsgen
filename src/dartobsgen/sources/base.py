@@ -15,6 +15,7 @@ class DataSource(ABC):
     def write_obs_seq(
         self,
         output_file: str,
+        analysis_time: datetime,
         date0: datetime,
         date1: datetime,
         lat_min: float,
@@ -30,10 +31,17 @@ class DataSource(ABC):
         ----------
         output_file : str
             Full path for the output obs_seq file.
+        analysis_time : datetime
+            The assimilation time T that this window is centered on — the
+            model's stopping time, and the time the output file is named
+            for.  Sources that place observations themselves (rather than
+            reading timestamps from a database) should use this as the
+            reference time.
         date0 : datetime
-            Start of the half-open window [date0, date1).
+            Lower bound of the window (T - freq/2), **exclusive**.
         date1 : datetime
-            End of the half-open window (exclusive).
+            Upper bound of the window (T + freq/2), **inclusive**.
+            The window is (date0, date1], per DART's convention.
         lat_min, lat_max : float
             Latitude bounds (degrees).
         lon_min, lon_max : float
@@ -71,6 +79,7 @@ class ObsSeqSource(DataSource):
     def write_obs_seq(
         self,
         output_file: str,
+        analysis_time: datetime,
         date0: datetime,
         date1: datetime,
         lat_min: float,
