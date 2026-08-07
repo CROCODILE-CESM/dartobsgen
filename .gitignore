@@ -4,6 +4,7 @@ dist
 __pycache__/
 *.egg-info/
 .coverage 
+build
 
 # 
 .DS_Store
