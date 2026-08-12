@@ -3,8 +3,12 @@ dist
 .ipynb_checkpoints
 __pycache__/
 *.egg-info/
-.coverage 
+.coverage
 build
+
+# Sphinx
+docs/_build/
+docs/api/generated/
 
 # 
 .DS_Store
