@@ -18,7 +18,7 @@ def config():
 
 def windows(config):
     return _make_analysis_windows(
-        config.start, config.end, config.assimilation_frequency
+        config.first_analysis, config.end, config.assimilation_frequency
     )
 
 
@@ -67,8 +67,73 @@ def test_filename_uses_analysis_time(config):
 def test_odd_frequency_rejected(config):
     with pytest.raises(ValueError, match="even whole number of seconds"):
         _make_analysis_windows(
-            config.start, config.end, datetime.timedelta(seconds=3)
+            config.first_analysis, config.end, datetime.timedelta(seconds=3)
         )
+
+
+BBOX = dict(lat_min=5, lat_max=60, lon_min=-100, lon_max=-30,
+            obs_types=["ARGO_TEMPERATURE"])
+
+
+class TestStartVsFirstAnalysis:
+    def test_start_derives_first_analysis(self):
+        cfg = ObsGenConfig(
+            start=datetime.datetime(2010, 5, 1),
+            end=datetime.datetime(2010, 5, 2),
+            assimilation_frequency=datetime.timedelta(hours=6),
+            **BBOX,
+        )
+        assert cfg.first_analysis == datetime.datetime(2010, 5, 1, 6)
+
+    def test_first_analysis_derives_start(self):
+        cfg = ObsGenConfig(
+            first_analysis=datetime.datetime(2010, 5, 1, 6),
+            end=datetime.datetime(2010, 5, 2),
+            assimilation_frequency=datetime.timedelta(hours=6),
+            **BBOX,
+        )
+        assert cfg.start == datetime.datetime(2010, 5, 1)
+
+    def test_the_two_forms_agree(self):
+        common = dict(end=datetime.datetime(2010, 5, 2),
+                      assimilation_frequency=datetime.timedelta(hours=6), **BBOX)
+        by_start = ObsGenConfig(start=datetime.datetime(2010, 5, 1), **common)
+        by_analysis = ObsGenConfig(
+            first_analysis=datetime.datetime(2010, 5, 1, 6), **common
+        )
+        assert windows(by_start) == windows(by_analysis)
+
+    def test_neither_rejected(self):
+        with pytest.raises(ValueError, match="exactly one of start or first_analysis"):
+            ObsGenConfig(end=datetime.datetime(2010, 5, 2), **BBOX)
+
+    def test_both_rejected(self):
+        with pytest.raises(ValueError, match="exactly one of start or first_analysis"):
+            ObsGenConfig(
+                start=datetime.datetime(2010, 5, 1),
+                first_analysis=datetime.datetime(2010, 5, 1, 6),
+                end=datetime.datetime(2010, 5, 2),
+                **BBOX,
+            )
+
+    def test_no_analysis_times_rejected(self):
+        # end lands before start + freq, so the run has nothing to do
+        with pytest.raises(ValueError, match="No analysis times in the run"):
+            ObsGenConfig(
+                start=datetime.datetime(2010, 5, 1),
+                end=datetime.datetime(2010, 5, 1, 1),
+                assimilation_frequency=datetime.timedelta(hours=6),
+                **BBOX,
+            )
+
+    def test_odd_frequency_rejected_at_config(self):
+        with pytest.raises(ValueError, match="even whole number of seconds"):
+            ObsGenConfig(
+                start=datetime.datetime(2010, 5, 1),
+                end=datetime.datetime(2010, 5, 2),
+                assimilation_frequency=datetime.timedelta(seconds=3),
+                **BBOX,
+            )
 
 
 def test_obs_seq_source_stub():

@@ -10,7 +10,8 @@ build
 .DS_Store
 .vscode
 
-#
+# various local dirs for testing
 obs_output/
 DART/
 example_mom6
+obs_output_synth/

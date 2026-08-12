@@ -103,7 +103,7 @@ def cache_dir(tmp_path):
 class TestSliceSelection:
     def test_selects_slice_within_window(self, daily_file, cache_dir):
         provider = MOM6StateProvider(daily_file, cache_dir=cache_dir)
-        state = provider.state_for_window(datetime(2010, 1, 3), datetime(2010, 1, 4))
+        state = provider.state_for_window(datetime(2010, 1, 2), datetime(2010, 1, 3))
         assert state is not None
         assert state.valid_time == datetime(2010, 1, 3)
         with xr.open_dataset(state.path, decode_times=False) as ds:
@@ -118,14 +118,17 @@ class TestSliceSelection:
         assert provider.state_for_window(datetime(2010, 2, 1), datetime(2010, 2, 2)) is None
 
     def test_window_is_half_open(self, daily_file, cache_dir):
-        # date1 is exclusive: a slice exactly at date1 must not be selected
+        # (date0, date1] matches the window perfect_model_obs is given, so a
+        # slice exactly on date0 belongs to the previous window, not this one.
         provider = MOM6StateProvider(daily_file, cache_dir=cache_dir)
-        assert provider.state_for_window(datetime(2009, 12, 31), datetime(2010, 1, 1)) is None
+        assert provider.state_for_window(datetime(2010, 1, 1), datetime(2010, 1, 2)) \
+            .valid_time == datetime(2010, 1, 2)
+        assert provider.state_for_window(datetime(2010, 1, 5), datetime(2010, 1, 6)) is None
 
     def test_picks_earliest_of_multiple_slices(self, daily_file, cache_dir):
         # one slice per window: a 3-day window takes the earliest slice
         provider = MOM6StateProvider(daily_file, cache_dir=cache_dir)
-        state = provider.state_for_window(datetime(2010, 1, 2), datetime(2010, 1, 5))
+        state = provider.state_for_window(datetime(2010, 1, 1), datetime(2010, 1, 4))
         assert state.valid_time == datetime(2010, 1, 2)
 
     def test_midday_stamps_keep_time_of_day(self, tmp_path, cache_dir):
@@ -171,7 +174,7 @@ class TestExtractionCache:
         path = tmp_path / "single.nc"
         make_mom6_file(path, [raw_days(datetime(2010, 1, 1))])
         provider = MOM6StateProvider(str(path), cache_dir=cache_dir)
-        state = provider.state_for_window(datetime(2010, 1, 1), datetime(2010, 1, 2))
+        state = provider.state_for_window(datetime(2009, 12, 31), datetime(2010, 1, 1))
         assert os.path.samefile(state.path, path)
         assert not os.path.exists(cache_dir)  # nothing was extracted
 
@@ -181,7 +184,7 @@ class TestExtractionCache:
                 tmp_path / f"mom6.r.2010010{d}.nc", [raw_days(datetime(2010, 1, d))]
             )
         provider = MOM6StateProvider(str(tmp_path / "mom6.r.*.nc"), cache_dir=cache_dir)
-        state = provider.state_for_window(datetime(2010, 1, 2), datetime(2010, 1, 3))
+        state = provider.state_for_window(datetime(2010, 1, 1), datetime(2010, 1, 2))
         assert state.valid_time == datetime(2010, 1, 2)
         assert os.path.samefile(state.path, tmp_path / "mom6.r.20100102.nc")
 
@@ -208,7 +211,7 @@ class TestValidation:
             str(path), cache_dir=cache_dir, required_vars=("Temp", "Salt", "h")
         )
         assert provider.state_for_window(
-            datetime(2010, 1, 1), datetime(2010, 1, 2)
+            datetime(2009, 12, 31), datetime(2010, 1, 1)
         ) is not None
 
     def test_no_time_variable_raises(self, tmp_path, cache_dir):

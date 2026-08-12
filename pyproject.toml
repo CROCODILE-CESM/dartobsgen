@@ -23,7 +23,8 @@ dependencies = [
     "scipy",
     "nnja-ai",
     "f90nml",
-    "gsw==3.6.19"
+    "gsw==3.6.19",
+    "pydartdiags",
 ]
 
 [project.optional-dependencies]

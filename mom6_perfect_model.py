@@ -15,6 +15,13 @@ MODEL_OUTPUT points at restart-format output from a MOM6 run (a single
 multi-timeslice file, or a glob over per-time files).  Each assimilation
 window uses the earliest timeslice inside it; windows with no slice are
 skipped.
+
+Because perfect_model_obs cannot advance a model this size, observations are
+placed at the valid time of the state being interpolated.  The run's analysis
+times must therefore line up with the MOM6 output times: configure with
+``first_analysis=<first model output time>``, not ``start``.
+PerfectModelSource.check_coverage reports the alignment before any window
+runs, and fails immediately if no output time falls in any window.
 """
 
 from __future__ import annotations
@@ -38,15 +45,18 @@ from dartobsgen import (
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-DART_WORK_DIR = os.path.join(_HERE, "pmo_run")
-OUTPUT_DIR = "./obs_output"
+#DART_WORK_DIR = os.path.join(_HERE, "pmo_run")
+DART_WORK_DIR = '/Users/hkershaw/DART/Crocodile/Observations/pmo_run'
+OUTPUT_DIR = "./obs_output_synth"
 
 # MOM6 output (restart or z-space history format, matching the
 # model_state_variables in input.nml): one multi-timeslice file or a glob.
-MODEL_OUTPUT = os.path.join(
-    _HERE,
-    "example_mom6/EEP_MITgcm185Lvgrid_Whitt2026hgrid.mom6.h.z.2015-10-004/mom6.h.nc",
-)
+#MODEL_OUTPUT = os.path.join(
+#    _HERE,
+#    "example_mom6/EEP_MITgcm185Lvgrid_Whitt2026hgrid.mom6.h.z.2015-10-004/mom6.h.nc",
+#)
+MODEL_OUTPUT = '/Users/hkershaw/DART/Crocodile/Observations/TestTutorials/dartobsgen/example_mom6/EEP_MITgcm185Lvgrid_Whitt2026hgrid.mom6.h.z.2015-10-004/mom6.h.nc'
+
 STATE_CACHE_DIR = "./state_cache"
 
 # Argo-like profile depths in metres
@@ -90,8 +100,14 @@ def main() -> None:
           f"({n_profiles} locations × {len(PROFILE_DEPTHS)} depths × 2 variables)")
 
     config = ObsGenConfig(
-        start=datetime.datetime(2015, 10, 1),
-        end=datetime.datetime(2015, 10, 8),
+        # Synthetic obs are placed at the model state's valid time, so the
+        # analysis times must land on the MOM6 output times.  Give
+        # first_analysis (the first model output time) rather than start
+        # (the model run start), which would put the first analysis one
+        # frequency later and miss the output entirely.  This example's
+        # history file holds one daily-mean slice stamped at 2015-10-04 12Z.
+        first_analysis=datetime.datetime(2015, 10, 4, 12),
+        end=datetime.datetime(2015, 10, 8, 12),
         lat_min=-12.0,
         lat_max=12.0,
         lon_min=-170.0,

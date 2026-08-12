@@ -118,3 +118,100 @@ def test_write_obs_seq_skips_window_without_state(tmp_path):
         obs_type_map=None,
     )
     assert written is False
+
+
+class _FixedTimesProvider(ModelStateProvider):
+    """Provider stub serving states at a fixed list of valid times."""
+
+    def __init__(self, times):
+        self._times = sorted(times)
+
+    def available_times(self):
+        return list(self._times)
+
+    def state_for_window(self, date0, date1):
+        return None  # coverage checks never reach this
+
+
+def _source(provider):
+    return PerfectModelSource(
+        dart_work_dir="/nonexistent", obs_network=[], state_provider=provider
+    )
+
+
+def _windows(first_analysis, n, freq):
+    half = freq / 2
+    return [
+        (first_analysis + i * freq,
+         first_analysis + i * freq - half,
+         first_analysis + i * freq + half)
+        for i in range(n)
+    ]
+
+
+DAY = datetime(2015, 10, 4, 12) - datetime(2015, 10, 3, 12)
+
+
+class TestCheckCoverage:
+    def test_aligned_states_pass(self, capsys):
+        times = [datetime(2015, 10, d, 12) for d in (4, 5, 6)]
+        _source(_FixedTimesProvider(times)).check_coverage(
+            _windows(datetime(2015, 10, 4, 12), 3, DAY)
+        )
+        out = capsys.readouterr().out
+        assert "3 of 3 window(s) have a state" in out
+        assert "outside all windows" in out  # summary line reports 0 outside
+
+    def test_no_state_in_any_window_raises(self):
+        # the classic misconfiguration: analysis times a half-day off the
+        # model output, so every state lands outside every window
+        times = [datetime(2015, 10, 4, 12)]
+        with pytest.raises(ValueError, match="No model state falls in any"):
+            _source(_FixedTimesProvider(times)).check_coverage(
+                _windows(datetime(2015, 10, 6, 0), 3, DAY)
+            )
+
+    def test_error_names_the_fix(self):
+        times = [datetime(2015, 10, 4, 12)]
+        with pytest.raises(ValueError) as exc:
+            _source(_FixedTimesProvider(times)).check_coverage(
+                _windows(datetime(2015, 10, 6, 0), 3, DAY)
+            )
+        assert "first_analysis=2015-10-04T12:00:00" in str(exc.value)
+
+    def test_reports_states_outside_all_windows(self, capsys):
+        times = [datetime(2015, 10, d, 12) for d in (4, 5, 9)]
+        _source(_FixedTimesProvider(times)).check_coverage(
+            _windows(datetime(2015, 10, 4, 12), 3, DAY)
+        )
+        out = capsys.readouterr().out
+        assert "Outside all windows: 2015-10-09T12:00:00" in out
+
+    def test_reports_shadowed_states(self, capsys):
+        # two states inside one daily window: only the earliest is used
+        times = [datetime(2015, 10, 4, 6), datetime(2015, 10, 4, 12)]
+        _source(_FixedTimesProvider(times)).check_coverage(
+            _windows(datetime(2015, 10, 4, 12), 1, DAY)
+        )
+        out = capsys.readouterr().out
+        assert "Shadowed" in out
+        assert "2015-10-04T12:00:00" in out
+
+    def test_reports_off_centre_states(self, capsys):
+        # state inside its window but not at the analysis time
+        times = [datetime(2015, 10, 4, 12)]
+        _source(_FixedTimesProvider(times)).check_coverage(
+            _windows(datetime(2015, 10, 4, 18), 1, DAY)
+        )
+        out = capsys.readouterr().out
+        assert "Off-centre" in out
+
+    def test_no_provider_is_a_no_op(self):
+        source = PerfectModelSource(dart_work_dir="/nonexistent", obs_network=[])
+        assert source.check_coverage(_windows(datetime(2015, 10, 4, 12), 3, DAY)) is None
+
+    def test_unenumerable_provider_is_a_no_op(self):
+        # _NoStateProvider inherits available_times() -> None
+        assert _source(_NoStateProvider()).check_coverage(
+            _windows(datetime(2015, 10, 4, 12), 3, DAY)
+        ) is None

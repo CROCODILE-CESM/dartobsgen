@@ -61,7 +61,13 @@ class ModelStateProvider(ABC):
 
     @abstractmethod
     def state_for_window(self, date0: datetime, date1: datetime) -> ModelState | None:
-        """Return the model state for the half-open window ``[date0, date1)``.
+        """Return the model state for the window ``(date0, date1]``.
+
+        The interval is open below and closed above, matching the window
+        ``perfect_model_obs`` is given (``first_obs = date0 + 1s``,
+        ``last_obs = date1``).  A state landing exactly on ``date0`` belongs
+        to the previous window; returning it here would place every
+        observation one second before ``first_obs``.
 
         Returns
         -------
@@ -69,6 +75,18 @@ class ModelStateProvider(ABC):
             ``None`` if no model state falls within the window; the window
             is then skipped (no obs_seq file is written).
         """
+
+    def available_times(self) -> list[datetime] | None:
+        """Return the valid times of every state this provider can serve.
+
+        Sorted ascending.  The default returns ``None``, meaning the
+        provider cannot enumerate its states; ``PerfectModelSource`` then
+        skips its pre-flight coverage check rather than guessing.  Override
+        this in providers that index their input up front, so a mismatch
+        between the run's analysis times and the model output times is
+        reported before any window runs.
+        """
+        return None
 
 
 def state_vars_from_nml(nml_path: str) -> tuple[str, ...]:
@@ -129,8 +147,11 @@ class MOM6StateProvider(ModelStateProvider):
     Notes
     -----
     **Slice selection** — one slice per window: the earliest slice whose
-    DART-visible time falls in ``[date0, date1)``.  Additional slices in the
-    same window are ignored.
+    DART-visible time falls in ``(date0, date1]``.  Additional slices in the
+    same window are ignored.  The interval is open at the lower edge to match
+    the window ``perfect_model_obs`` is given (``first_obs = date0 + 1s``);
+    a slice landing exactly on ``date0`` belongs to the previous window, and
+    selecting it here would place every obs one second before ``first_obs``.
 
     **Time handling** — selection and ``valid_time`` use the time exactly as
     DART's ``read_model_time`` computes it (see
@@ -214,10 +235,18 @@ class MOM6StateProvider(ModelStateProvider):
                 "DART computes."
             )
 
+    def available_times(self) -> list[datetime]:
+        """Valid times of every indexed timeslice, ascending.
+
+        ``_index`` is already sorted by raw day number, and
+        :func:`mom6_time_to_datetime` is monotonic, so this preserves order.
+        """
+        return [mom6_time_to_datetime(raw) for _, _, raw in self._index]
+
     def state_for_window(self, date0: datetime, date1: datetime) -> ModelState | None:
         for path, time_index, raw in self._index:
             valid_time = mom6_time_to_datetime(raw)
-            if date0 <= valid_time < date1:
+            if date0 < valid_time <= date1:
                 return ModelState(
                     path=self._extract(path, time_index, valid_time),
                     valid_time=valid_time,

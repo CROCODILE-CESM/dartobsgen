@@ -15,7 +15,7 @@ _DART_EPOCH_PY = datetime(1601, 1, 1)
 
 # Files that must not be symlinked from dart_work_dir into each window dir —
 # either because the window writes them or because the window patches them.
-_SKIP_LINKS = frozenset({"input.nml", "obs_seq.in", "obs_seq.out", "windows"})
+_SKIP_LINKS = frozenset({"input.nml", "obs_seq.in", "obs_seq.out", "windows", "dart_log.out"})
 
 
 @dataclass
@@ -62,6 +62,14 @@ class ObsNetworkEntry:
 def _tail(text: str, n: int) -> str:
     """Return the last *n* lines of *text*."""
     return "\n".join(text.splitlines()[-n:])
+
+
+def _abbrev(times: list[datetime], limit: int = 5) -> str:
+    """Render *times* as a short comma-separated list, eliding the middle."""
+    shown = [t.isoformat() for t in times[:limit]]
+    if len(times) > limit:
+        shown.append(f"... ({len(times)} total, last {times[-1].isoformat()})")
+    return ", ".join(shown)
 
 
 def _datetime_to_dart_time(dt: datetime) -> tuple[int, int]:
@@ -192,6 +200,12 @@ class PerfectModelSource(DataSource):
         are placed at the state's valid time (plus each entry's
         ``time_offset``).  Windows with no available state are skipped.
 
+        Because observations land on the state's valid time, the run's
+        analysis times must line up with the model output times.  Configure
+        that with ``ObsGenConfig(first_analysis=<first model output time>)``
+        rather than ``start``, and see :meth:`check_coverage`, which reports
+        the alignment before any window runs.
+
     Notes
     -----
     **Parallel safety**: each call to :meth:`write_obs_seq` runs in its own
@@ -219,6 +233,85 @@ class PerfectModelSource(DataSource):
         self.obs_network = obs_network
         self.perfect_model_obs_exe = perfect_model_obs_exe
         self.state_provider = state_provider
+
+    def check_coverage(
+        self, windows: list[tuple[datetime, datetime, datetime]]
+    ) -> None:
+        """Report how the run's windows line up with the available model states.
+
+        Synthetic observations can only be produced where a model state
+        exists, so a run whose analysis times miss the model output times
+        writes nothing at all.  This runs before any window and classifies
+        every state as *used* (the earliest in its window), *shadowed* (in a
+        window that already has an earlier state, so ignored) or *outside*
+        (in no window).  It prints a one-block summary, and raises when no
+        state is usable — the case that would otherwise look like a silent
+        success.
+
+        Does nothing without a ``state_provider``, or when the provider
+        cannot enumerate its states (``available_times()`` returns ``None``).
+
+        Raises
+        ------
+        ValueError
+            If no model state falls in any window.  The message names the
+            ``first_analysis`` that would capture the model output.
+        """
+        if self.state_provider is None or not windows:
+            return
+        times = self.state_provider.available_times()
+        if times is None:
+            return
+
+        freq = windows[0][2] - windows[0][1]
+        used: dict[datetime, datetime] = {}   # analysis time -> state time
+        shadowed: list[datetime] = []
+        outside: list[datetime] = []
+        for t in times:
+            for analysis, date0, date1 in windows:
+                if date0 < t <= date1:
+                    if analysis in used:
+                        shadowed.append(t)
+                    else:
+                        used[analysis] = t
+                    break
+            else:
+                outside.append(t)
+
+        if not used:
+            raise ValueError(
+                f"No model state falls in any assimilation window, so no "
+                f"observations can be generated.\n"
+                f"  model output times: {_abbrev(times)}\n"
+                f"  analysis times:     {_abbrev([w[0] for w in windows])}\n"
+                f"  windows cover:      ({windows[0][1].isoformat()}, "
+                f"{windows[-1][2].isoformat()}] every {freq}\n"
+                f"  Observations are placed at the model state's valid time, "
+                f"so the analysis times must line up with the model output "
+                f"times.  Set first_analysis={times[0].isoformat()} and "
+                f"end>={times[-1].isoformat()} to cover the model output."
+            )
+
+        print(
+            f"Model state coverage: {len(used)} of {len(windows)} window(s) "
+            f"have a state; {len(times)} model output time(s) "
+            f"({len(used)} used, {len(shadowed)} shadowed, "
+            f"{len(outside)} outside all windows)."
+        )
+        if shadowed:
+            print(
+                f"  Shadowed (a window uses only its earliest state): "
+                f"{_abbrev(shadowed)}"
+            )
+        if outside:
+            print(f"  Outside all windows: {_abbrev(outside)}")
+        offset = [a for a, t in used.items() if t != a]
+        if offset:
+            print(
+                f"  Off-centre (state not at the analysis time, so obs land "
+                f"away from the window centre): "
+                f"{_abbrev([used[a] for a in offset])}"
+            )
 
     def _setup_window_dir(self, window_dir: str) -> None:
         """Create *window_dir* and symlink shared files from ``dart_work_dir``."""
