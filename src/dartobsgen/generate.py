@@ -21,14 +21,13 @@ def _format_timestamp(dt: datetime, fmt: str) -> str:
 
 
 def _make_analysis_windows(
-    start: datetime, end: datetime, freq: timedelta
+    first_analysis: datetime, end: datetime, freq: timedelta
 ) -> list[tuple[datetime, datetime, datetime]]:
     """Return ``(analysis_time, date0, date1)`` triples, one per assimilation cycle.
 
-    *start* is the **start of the model run**, not the first analysis time.
-    The model must advance one assimilation period before the first
-    assimilation, so analysis times are ``start + freq``, ``start + 2*freq``,
-    ... up to and including *end*.
+    Analysis times are ``first_analysis``, ``first_analysis + freq``, ... up
+    to and including *end*.  ``ObsGenConfig`` derives ``first_analysis`` from
+    ``start + freq`` when the caller gave a model-run start instead.
 
     Each analysis time ``T`` gets the window ``(T - freq/2, T + freq/2]``,
     matching DART's convention: obs_seq files are named for the analysis
@@ -39,8 +38,8 @@ def _make_analysis_windows(
 
     Windows are contiguous and non-overlapping: adjacent windows share a
     boundary instant, which the closed upper bound assigns to the earlier
-    window.  The first window starts at ``start + freq/2`` and the last ends
-    at ``end + freq/2``.
+    window.  The first window starts at ``first_analysis - freq/2`` and the
+    last ends at ``end + freq/2``.
 
     Raises
     ------
@@ -59,7 +58,7 @@ def _make_analysis_windows(
 
     half = freq / 2
     windows: list[tuple[datetime, datetime, datetime]] = []
-    analysis_time = start + freq
+    analysis_time = first_analysis
     while analysis_time <= end:
         windows.append((analysis_time, analysis_time - half, analysis_time + half))
         analysis_time += freq
@@ -107,17 +106,23 @@ def generate_obs_sequences(
 ) -> list[str]:
     """Generate one DART obs_seq file per assimilation cycle.
 
-    Analysis times run from ``config.start + freq`` through ``config.end``
+    Analysis times run from ``config.first_analysis`` through ``config.end``
     inclusive; each gets the window ``(T - freq/2, T + freq/2]`` and a file
     named for ``T``, following DART's convention.  Calls
     ``source.write_obs_seq`` for each and returns the paths of every file
     that was written.  Windows that contain no observations are silently
     skipped.
 
+    Before running any window, ``source.check_coverage`` is given the full
+    list of windows so the source can report — or reject — a mismatch
+    between the windows and the data it can actually serve.  Most sources
+    take the default no-op; ``PerfectModelSource`` uses it to catch analysis
+    times that do not line up with the model output times.
+
     Parameters
     ----------
     config : ObsGenConfig
-        Run configuration (model run span, bbox, obs types, window width,
+        Run configuration (analysis times, bbox, obs types, window width,
         output path and naming settings).
     source : DataSource
         Observation data source (e.g. ``CrocLakeSource``).
@@ -133,8 +138,9 @@ def generate_obs_sequences(
     """
     os.makedirs(config.output_dir, exist_ok=True)
     windows = _make_analysis_windows(
-        config.start, config.end, config.assimilation_frequency
+        config.first_analysis, config.end, config.assimilation_frequency
     )
+    source.check_coverage(windows)
 
     jobs = [
         (

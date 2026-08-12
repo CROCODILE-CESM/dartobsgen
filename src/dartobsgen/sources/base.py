@@ -59,6 +59,39 @@ class DataSource(ABC):
             were found for this window.
         """
 
+    def check_coverage(
+        self, windows: list[tuple[datetime, datetime, datetime]]
+    ) -> None:
+        """Pre-flight check of *windows* against the data this source can serve.
+
+        Called once by ``generate_obs_sequences`` before any window runs,
+        with every ``(analysis_time, date0, date1)`` triple of the run.  The
+        default is a no-op: sources backed by a continuous observation
+        archive (``CrocLakeSource``, ``NNJASource``) have nothing to check,
+        since any window is as good as any other.
+
+        Override it in sources whose data lives at a fixed set of discrete
+        times — ``PerfectModelSource``, where observations can only be
+        generated at the valid times of the available model states.  Such a
+        source should print a short coverage summary, and raise
+        ``ValueError`` when no window can produce anything, so a
+        misconfigured run fails immediately with a diagnosis instead of
+        writing zero files without explanation.
+
+        Parameters
+        ----------
+        windows : list of (datetime, datetime, datetime)
+            Every ``(analysis_time, date0, date1)`` of the run, in
+            chronological order.  Windows are contiguous, so they span
+            ``(windows[0][1], windows[-1][2]]``.
+
+        Raises
+        ------
+        ValueError
+            If the source determines that no window can yield observations.
+        """
+        return None
+
 
 class ObsSeqSource(DataSource):
     """Stub: future data source backed by a bank of existing obs_seq files.

@@ -8,13 +8,14 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
+from ..model_state import ModelState, ModelStateProvider
 from .base import DataSource
 
 _DART_EPOCH_PY = datetime(1601, 1, 1)
 
 # Files that must not be symlinked from dart_work_dir into each window dir —
 # either because the window writes them or because the window patches them.
-_SKIP_LINKS = frozenset({"input.nml", "obs_seq.in", "obs_seq.out", "windows"})
+_SKIP_LINKS = frozenset({"input.nml", "obs_seq.in", "obs_seq.out", "windows", "dart_log.out"})
 
 
 @dataclass
@@ -28,7 +29,8 @@ class ObsNetworkEntry:
     lat : float
         Latitude in degrees.
     lon : float
-        Longitude in degrees (-180 to 180).
+        Longitude in degrees (-180 to 180 or 0 to 360; written to the
+        obs_seq file wrapped to 0–360 as DART requires).
     vertical : float
         Vertical coordinate value (units defined by ``vert_unit``).
     vert_unit : str
@@ -38,11 +40,14 @@ class ObsNetworkEntry:
         Observation error variance (same units as the observed quantity,
         squared).
     time_offset : timedelta
-        Offset from the cycle's ``analysis_time`` at which this observation is
-        placed.  Default is ``timedelta(0)`` — exactly at the analysis time,
-        i.e. the centre of the window.  Must stay within
-        ``(-freq/2, +freq/2]`` or ``perfect_model_obs`` will reject the
-        observation as outside the window.
+        Offset from the window's reference time at which this observation is
+        placed.  The reference time is the cycle's ``analysis_time`` (the
+        centre of the window), or the model state's valid time when a
+        ``state_provider`` is used (required because ``perfect_model_obs``
+        cannot advance large models, so obs must sit at the state time).
+        Default is ``timedelta(0)``.  Must stay within ``(-freq/2, +freq/2]``
+        or ``perfect_model_obs`` will reject the observation as outside the
+        window.
     """
 
     obs_type: str
@@ -54,6 +59,19 @@ class ObsNetworkEntry:
     time_offset: timedelta = field(default_factory=timedelta)
 
 
+def _tail(text: str, n: int) -> str:
+    """Return the last *n* lines of *text*."""
+    return "\n".join(text.splitlines()[-n:])
+
+
+def _abbrev(times: list[datetime], limit: int = 5) -> str:
+    """Render *times* as a short comma-separated list, eliding the middle."""
+    shown = [t.isoformat() for t in times[:limit]]
+    if len(times) > limit:
+        shown.append(f"... ({len(times)} total, last {times[-1].isoformat()})")
+    return ", ".join(shown)
+
+
 def _datetime_to_dart_time(dt: datetime) -> tuple[int, int]:
     """Return ``(days, seconds)`` since the DART epoch (1601-01-01 00:00:00)."""
     delta = dt - _DART_EPOCH_PY
@@ -61,22 +79,23 @@ def _datetime_to_dart_time(dt: datetime) -> tuple[int, int]:
 
 
 def _write_obs_seq_template(
-    entries: list[ObsNetworkEntry], analysis_time: datetime, output_path: str
+    entries: list[ObsNetworkEntry], ref_time: datetime, output_path: str
 ) -> None:
     """Write a template obs_seq.in with placeholder observation values.
 
     ``perfect_model_obs`` replaces the placeholder values (0.0) with
     forward-operator results from the model state.  The metadata — location,
-    type, time, error variance — must be correct.
-
-    Observations are placed at ``analysis_time + entry.time_offset``, so the
-    default offset of zero puts them at the centre of the window rather than
-    on its exclusive lower edge (where they would be filtered out).
+    type, time, error variance — must be correct.  Each observation is placed
+    at ``ref_time + entry.time_offset`` — the analysis time (window centre)
+    by default, or the model state's valid time when a ``state_provider`` is
+    used, so the default offset of zero avoids landing on the window's
+    exclusive lower edge.  Longitudes are wrapped to the 0–360 range DART
+    locations require.
     """
     from pydartdiags.obs_sequence.obs_sequence import ObsSequence  # noqa: PLC0415
 
     n = len(entries)
-    obs_times = [analysis_time + e.time_offset for e in entries]
+    obs_times = [ref_time + e.time_offset for e in entries]
     dart_times = [_datetime_to_dart_time(t) for t in obs_times]
 
     df = pd.DataFrame(
@@ -85,7 +104,7 @@ def _write_obs_seq_template(
             "observation": 0.0,
             "DART_quality_control": 0.0,
             "linked_list": "",
-            "longitude": [e.lon for e in entries],
+            "longitude": [e.lon % 360.0 for e in entries],
             "latitude": [e.lat for e in entries],
             "vertical": [e.vertical for e in entries],
             "vert_unit": [e.vert_unit for e in entries],
@@ -112,11 +131,15 @@ def _patch_input_nml(
     obs_seq_out: str,
     date0: datetime,
     date1: datetime,
+    input_state_files: str | None = None,
 ) -> None:
     """Write a patched ``input.nml`` for a single window.
 
     Only the ``perfect_model_obs_nml`` block is modified; all other namelist
-    groups are preserved verbatim.
+    groups are preserved verbatim.  When *input_state_files* is given, the
+    window reads its model state from that file (and
+    ``read_input_state_from_file`` is forced on); when ``None``, the state
+    settings in the base namelist are left untouched.
 
     The window ``(date0, date1]`` is expressed in DART's integer-second form
     as ``first_obs = date0 + 1s`` and ``last_obs = date1``, which is exactly
@@ -137,6 +160,9 @@ def _patch_input_nml(
     block["first_obs_seconds"] = first_secs
     block["last_obs_days"] = last_days
     block["last_obs_seconds"] = last_secs
+    if input_state_files is not None:
+        block["read_input_state_from_file"] = True
+        block["input_state_files"] = input_state_files
     nml["perfect_model_obs_nml"] = block
 
     nml.write(dest_nml, force=True)
@@ -166,6 +192,19 @@ class PerfectModelSource(DataSource):
     perfect_model_obs_exe : str
         Name or path of the executable relative to the window directory.
         Default is ``"./perfect_model_obs"``.
+    state_provider : ModelStateProvider, optional
+        Maps each window to a single-timeslice model state file (e.g.
+        :class:`~dartobsgen.model_state.MOM6StateProvider` slicing the
+        output of a model run).  When given, each window's ``input.nml``
+        points ``input_state_files`` at that window's state, and observations
+        are placed at the state's valid time (plus each entry's
+        ``time_offset``).  Windows with no available state are skipped.
+
+        Because observations land on the state's valid time, the run's
+        analysis times must line up with the model output times.  Configure
+        that with ``ObsGenConfig(first_analysis=<first model output time>)``
+        rather than ``start``, and see :meth:`check_coverage`, which reports
+        the alignment before any window runs.
 
     Notes
     -----
@@ -173,11 +212,14 @@ class PerfectModelSource(DataSource):
     subdirectory, so multiple ``ProcessPoolExecutor`` workers can run
     simultaneously without file conflicts.
 
-    **Model state**: ``perfect_model_obs`` interpolates from the initial
-    conditions file specified in ``input.nml``.  This class assumes a single
-    fixed initial conditions file valid for the entire run (appropriate for
-    Lorenz-type models or a frozen-truth scenario).  Time-advancing the model
-    across windows requires additional coupling outside the scope of this source.
+    **Model state**: ``perfect_model_obs`` interpolates from the model state
+    file named in ``input.nml``.  Without a ``state_provider``, this class
+    assumes a single fixed initial-conditions file valid for the entire run
+    (appropriate for Lorenz-type models or a frozen-truth scenario).  With a
+    ``state_provider``, each window gets the model state valid at that
+    window's time.  ``perfect_model_obs`` cannot advance large models, so
+    observation times must sit at the state's valid time — hence the obs
+    reference time switches from analysis time to state valid time.
     """
 
     def __init__(
@@ -185,10 +227,91 @@ class PerfectModelSource(DataSource):
         dart_work_dir: str,
         obs_network: list[ObsNetworkEntry],
         perfect_model_obs_exe: str = "./perfect_model_obs",
+        state_provider: ModelStateProvider | None = None,
     ):
         self.dart_work_dir = os.path.abspath(dart_work_dir)
         self.obs_network = obs_network
         self.perfect_model_obs_exe = perfect_model_obs_exe
+        self.state_provider = state_provider
+
+    def check_coverage(
+        self, windows: list[tuple[datetime, datetime, datetime]]
+    ) -> None:
+        """Report how the run's windows line up with the available model states.
+
+        Synthetic observations can only be produced where a model state
+        exists, so a run whose analysis times miss the model output times
+        writes nothing at all.  This runs before any window and classifies
+        every state as *used* (the earliest in its window), *shadowed* (in a
+        window that already has an earlier state, so ignored) or *outside*
+        (in no window).  It prints a one-block summary, and raises when no
+        state is usable — the case that would otherwise look like a silent
+        success.
+
+        Does nothing without a ``state_provider``, or when the provider
+        cannot enumerate its states (``available_times()`` returns ``None``).
+
+        Raises
+        ------
+        ValueError
+            If no model state falls in any window.  The message names the
+            ``first_analysis`` that would capture the model output.
+        """
+        if self.state_provider is None or not windows:
+            return
+        times = self.state_provider.available_times()
+        if times is None:
+            return
+
+        freq = windows[0][2] - windows[0][1]
+        used: dict[datetime, datetime] = {}   # analysis time -> state time
+        shadowed: list[datetime] = []
+        outside: list[datetime] = []
+        for t in times:
+            for analysis, date0, date1 in windows:
+                if date0 < t <= date1:
+                    if analysis in used:
+                        shadowed.append(t)
+                    else:
+                        used[analysis] = t
+                    break
+            else:
+                outside.append(t)
+
+        if not used:
+            raise ValueError(
+                f"No model state falls in any assimilation window, so no "
+                f"observations can be generated.\n"
+                f"  model output times: {_abbrev(times)}\n"
+                f"  analysis times:     {_abbrev([w[0] for w in windows])}\n"
+                f"  windows cover:      ({windows[0][1].isoformat()}, "
+                f"{windows[-1][2].isoformat()}] every {freq}\n"
+                f"  Observations are placed at the model state's valid time, "
+                f"so the analysis times must line up with the model output "
+                f"times.  Set first_analysis={times[0].isoformat()} and "
+                f"end>={times[-1].isoformat()} to cover the model output."
+            )
+
+        print(
+            f"Model state coverage: {len(used)} of {len(windows)} window(s) "
+            f"have a state; {len(times)} model output time(s) "
+            f"({len(used)} used, {len(shadowed)} shadowed, "
+            f"{len(outside)} outside all windows)."
+        )
+        if shadowed:
+            print(
+                f"  Shadowed (a window uses only its earliest state): "
+                f"{_abbrev(shadowed)}"
+            )
+        if outside:
+            print(f"  Outside all windows: {_abbrev(outside)}")
+        offset = [a for a, t in used.items() if t != a]
+        if offset:
+            print(
+                f"  Off-centre (state not at the analysis time, so obs land "
+                f"away from the window centre): "
+                f"{_abbrev([used[a] for a in offset])}"
+            )
 
     def _setup_window_dir(self, window_dir: str) -> None:
         """Create *window_dir* and symlink shared files from ``dart_work_dir``."""
@@ -223,7 +346,8 @@ class PerfectModelSource(DataSource):
         -------
         bool
             ``True`` if ``perfect_model_obs`` ran successfully and
-            ``output_file`` was written; ``False`` otherwise.
+            ``output_file`` was written; ``False`` otherwise (including
+            windows with no observations or no model state).
         """
         active = [
             e for e in self.obs_network
@@ -233,6 +357,13 @@ class PerfectModelSource(DataSource):
         ]
         if not active:
             return False
+
+        state: ModelState | None = None
+        if self.state_provider is not None:
+            state = self.state_provider.state_for_window(date0, date1)
+            if state is None:
+                print(f"No model state for window {date0.isoformat()}; skipping.")
+                return False
 
         # Name the scratch dir for the analysis time, so it matches the output
         # filename rather than the window's lower edge.
@@ -247,9 +378,19 @@ class PerfectModelSource(DataSource):
         src_nml = os.path.join(self.dart_work_dir, "input.nml")
         dest_nml = os.path.join(window_dir, "input.nml")
 
+        ref_time = state.valid_time if state is not None else analysis_time
+
         try:
-            _write_obs_seq_template(active, analysis_time, obs_seq_in)
-            _patch_input_nml(src_nml, dest_nml, "obs_seq.in", "obs_seq.out", date0, date1)
+            _write_obs_seq_template(active, ref_time, obs_seq_in)
+            _patch_input_nml(
+                src_nml,
+                dest_nml,
+                "obs_seq.in",
+                "obs_seq.out",
+                date0,
+                date1,
+                input_state_files=state.path if state is not None else None,
+            )
 
             result = subprocess.run(
                 [self.perfect_model_obs_exe],
@@ -258,10 +399,16 @@ class PerfectModelSource(DataSource):
                 text=True,
             )
             if result.returncode != 0:
-                print(
-                    f"perfect_model_obs failed for analysis time "
-                    f"{analysis_time.isoformat()}:\n{result.stderr}"
-                )
+                # DART reports fatal errors on stdout and in dart_log.out,
+                # not stderr; show all three before the window dir is removed.
+                print(f"perfect_model_obs failed for analysis time {analysis_time.isoformat()}:")
+                print(_tail(result.stdout, 20))
+                if result.stderr.strip():
+                    print(_tail(result.stderr, 20))
+                log_path = os.path.join(window_dir, "dart_log.out")
+                if os.path.exists(log_path):
+                    with open(log_path) as f:
+                        print(f"--- dart_log.out ---\n{_tail(f.read(), 20)}")
                 return False
 
             if not os.path.exists(obs_seq_out):

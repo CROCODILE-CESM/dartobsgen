@@ -17,6 +17,7 @@ from dartobsgen import ObsGenConfig, CrocLakeSource, generate_obs_sequences
 
 config = ObsGenConfig(
     start=datetime.datetime(2010, 5, 1),   # model run start; first analysis is 06Z
+                                           # (or say it directly: first_analysis=...)
     end=datetime.datetime(2010, 5, 3),     # last analysis time (inclusive)
     lat_min=5,   lat_max=60,
     lon_min=-100, lon_max=-30,
@@ -53,6 +54,7 @@ dartobsgen/
         ├── __init__.py           # Public API
         ├── config.py             # ObsGenConfig dataclass
         ├── generate.py           # generate_obs_sequences(), _make_analysis_windows()
+        ├── model_state.py        # ModelStateProvider ABC + MOM6StateProvider
         ├── spatial.py            # trim_obs_seq(), polygon helpers
         └── sources/
             ├── __init__.py
@@ -131,10 +133,30 @@ config = ObsGenConfig(..., obs_type_map=my_map)
 
 ## Time windows
 
-`start` is the **start of the model run, not the first analysis time.** In
-CESM+DART cycling the model advances one assimilation period before the first
-assimilation, so analysis times are `start + freq`, `start + 2*freq`, … up to
-and including `end`.
+Analysis times run from `first_analysis` through `end` inclusive, spaced by
+`assimilation_frequency`. Give **exactly one** of `start` or `first_analysis`;
+the other is derived, and both are populated on the config afterwards.
+
+| Field | Meaning | Use it when |
+|---|---|---|
+| `start` | Start of the **model run**, not an analysis time. `first_analysis = start + freq`. | Observations exist independently of the model (`CrocLakeSource`, `NNJASource`) — pick the time you initialize the model. |
+| `first_analysis` | The first analysis time itself. | The analysis times must land on times fixed by something else — in particular `PerfectModelSource`, where obs are placed at the valid times of the model states. |
+
+`start` exists because in CESM+DART cycling the model advances one
+assimilation period before the first assimilation. That implicit `+ freq` is
+easy to trip over, so state it directly with `first_analysis` whenever you
+know the analysis times you want:
+
+```python
+# These two are identical
+ObsGenConfig(start=datetime.datetime(2010, 5, 1), ...)             # first analysis 06Z
+ObsGenConfig(first_analysis=datetime.datetime(2010, 5, 1, 6), ...) # same thing, said directly
+```
+
+Passing neither, passing both, or configuring a run with no analysis times at
+all (`first_analysis > end`) raises `ValueError` at construction.
+
+All `ObsGenConfig` fields are keyword-only.
 
 Each analysis time `T` gets the window `(T - freq/2, T + freq/2]` — open
 below, closed above. This matches DART's documented convention (see
@@ -145,9 +167,9 @@ window time."*
 
 Windows are contiguous and non-overlapping. Adjacent windows share a boundary
 instant, and the closed upper bound assigns it to the earlier window, so no
-observation is ever written to two files. Note that observations in
-`[start, start + freq/2]` are deliberately unused — they belong to the
-analysis at `start`, which happened before this run began.
+observation is ever written to two files. Note that observations before
+`first_analysis - freq/2` are deliberately unused — they belong to an earlier
+analysis, which happened before this run began.
 
 `assimilation_frequency` accepts any `datetime.timedelta` that is an even
 whole number of seconds (so that the half-width `freq/2` lands on an integer
@@ -165,9 +187,9 @@ config = ObsGenConfig(..., assimilation_frequency=datetime.timedelta(hours=6))
 config = ObsGenConfig(..., assimilation_frequency=datetime.timedelta(minutes=30))
 ```
 
-To land on conventional analysis times, set `start` one frequency before the
-first one you want: for analyses at 06Z/12Z/18Z/00Z with 6-hour windows, use
-`start=datetime.datetime(2010, 5, 1)` (00Z).
+To land on conventional analysis times, either name the first one directly
+with `first_analysis=datetime.datetime(2010, 5, 1, 6)` (06Z), or set `start`
+one frequency before it: `start=datetime.datetime(2010, 5, 1)` (00Z).
 
 ## Parallel generation
 
@@ -286,6 +308,24 @@ relative to `analysis_time`, since `date0` itself is outside the window.
 
 `ObsSeqSource` in `dartobsgen.sources.base` is a pre-wired stub for
 a future data source backed by a bank of existing obs_seq files.
+
+### Optional: `check_coverage`
+
+`DataSource.check_coverage(windows)` is called once before any window runs,
+with every `(analysis_time, date0, date1)` triple of the run. The default is a
+no-op, which is right for sources backed by a continuous archive — any window
+is as good as any other.
+
+Override it when your data lives at a fixed set of discrete times, so a run
+whose windows miss those times fails with a diagnosis instead of writing zero
+files and reporting success. `PerfectModelSource` does exactly this.
+
+```python
+class MySource(DataSource):
+    def check_coverage(self, windows) -> None:
+        if nothing_I_have_falls_in(windows):
+            raise ValueError("... and here is the setting that would fix it")
+```
 
 
 ---
@@ -410,12 +450,67 @@ This is the same directory structure used to run `perfect_model_obs` by hand.
 | `obs_err_var` | `float` | Observation error variance |
 | `time_offset` | `timedelta` | Offset from the analysis time (default `timedelta(0)`) |
 
+### Driving it from model output: `state_provider`
+
+`perfect_model_obs` cannot advance a large model, so it interpolates from a
+state file you hand it. `MOM6StateProvider` indexes the timeslices of a MOM6
+run's output and serves one per window, and observations are then placed at
+**the valid time of that state**, not at the analysis time.
+
+That inverts the usual configuration: the analysis times must line up with the
+model output times. Use `first_analysis`, not `start`:
+
+```python
+config = ObsGenConfig(
+    first_analysis=datetime.datetime(2015, 10, 4, 12),  # first model output time
+    end=datetime.datetime(2015, 10, 8, 12),             # last analysis time
+    assimilation_frequency=datetime.timedelta(hours=24),
+    ...
+)
+```
+
+Using `start` here would place the first analysis one frequency *after* the
+first model output time, and every state could fall outside every window.
+
+A window selects the earliest state in `(date0, date1]` — open below, closed
+above, matching the window `perfect_model_obs` is given (`first_obs = date0 +
+1s`, `last_obs = date1`). A state landing exactly on `date0` belongs to the
+previous window; selecting it would place every observation one second before
+`first_obs` and DART would abort with *"All obs in sequence are before
+first_obs_days:first_obs_seconds"*.
+
+`PerfectModelSource.check_coverage` reports the alignment before any window
+runs:
+
+```
+Model state coverage: 1 of 5 window(s) have a state; 1 model output time(s)
+(1 used, 0 shadowed, 0 outside all windows).
+```
+
+and raises when nothing lines up, naming the setting that would fix it:
+
+```
+No model state falls in any assimilation window, so no observations can be generated.
+  model output times: 2015-10-04T12:00:00
+  analysis times:     2015-10-06T00:00:00, 2015-10-07T00:00:00, 2015-10-08T00:00:00
+  windows cover:      (2015-10-05T12:00:00, 2015-10-08T12:00:00] every 1 day, 0:00:00
+  Observations are placed at the model state's valid time, so the analysis
+  times must line up with the model output times.  Set
+  first_analysis=2015-10-04T12:00:00 and end>=2015-10-04T12:00:00 to cover
+  the model output.
+```
+
+It also flags *shadowed* states (a second state in a window that already has
+an earlier one — only the earliest is used) and *off-centre* states (in a
+window but not at its analysis time, so obs land away from the window centre).
+
 ### Controlling observation time within a window
 
-By default all observations are placed at the **analysis time** — the centre
-of the window. Use `time_offset` to shift individual entries; it must stay
-within `(-freq/2, +freq/2]` or `perfect_model_obs` will reject the
-observation as outside the window.
+With a `state_provider`, observations are placed at the state's valid time.
+Without one, they are placed at the **analysis time** — the centre of the
+window. Either way, `time_offset` shifts individual entries relative to that
+reference; it must stay within `(-freq/2, +freq/2]` or `perfect_model_obs`
+will reject the observation as outside the window.
 
 ```python
 import datetime
@@ -430,8 +525,9 @@ entry_late = ObsNetworkEntry(..., time_offset=datetime.timedelta(hours=1))
 ### MOM6 example
 
 `mom6_perfect_model.py` shows a complete ocean example: synthetic temperature
-and salinity profiles on a sparse lat/lon grid at six depths, run over a
-seven-day period with daily assimilation windows.
+and salinity profiles on a sparse lat/lon grid at six depths, drawn from a
+MOM6 history file via `MOM6StateProvider` with daily assimilation windows
+anchored on the model output times.
 
 
 ### Parallel execution
