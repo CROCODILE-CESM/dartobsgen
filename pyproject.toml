@@ -29,6 +29,17 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+docs = [
+    "sphinx>=7.2",
+    "pydata-sphinx-theme>=0.15",
+    "myst-parser>=3.0",
+    "sphinx-copybutton",
+    "sphinx-design",
+    # autodoc imports dartobsgen; only these three are needed at module scope.
+    "numpy",
+    "pandas",
+    "shapely>=2.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

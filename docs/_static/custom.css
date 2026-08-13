@@ -1,0 +1,34 @@
+/* dartobsgen documentation tweaks on top of pydata-sphinx-theme. */
+
+/* The obs-type and field-reference tables are wide; let them scroll rather
+   than squeezing the content column. */
+.bd-content table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+/* Keep DART filenames and obs type names from wrapping mid-identifier. */
+.bd-content table code {
+  white-space: nowrap;
+}
+
+/* Landing-page navigation cards: roomier than the sphinx-design default.
+   The octicons are sized in em inside the title, so they scale with it. */
+.bd-content .sd-card {
+  min-height: 11rem;
+}
+
+.bd-content .sd-card .sd-card-body {
+  padding: 1.75rem 1.75rem 1.5rem;
+}
+
+.bd-content .sd-card .sd-card-title {
+  font-size: 1.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.bd-content .sd-card .sd-card-text {
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
