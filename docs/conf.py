@@ -105,6 +105,7 @@ html_theme_options = {
     "use_edit_page_button": True,
     "footer_start": ["copyright"],
     "footer_end": ["theme-version"],
+    "announcement": "Welcome to the dartobsgen documentation! 🚀",
 }
 
 html_context = {
