@@ -5,11 +5,12 @@ model state, producing one obs_seq file per assimilation window.
 
 PMO_RUN_DIR is a standalone directory you set up to run
 perfect_model_obs from -- not DART's source-tree models/MOM6/work.
-Prerequisites in PMO_RUN_DIR:
-  - Compiled perfect_model_obs executable
-  - input.nml with a perfect_model_obs_nml block
-  - mom6.r.nc (template_file), mom6.static.nc, ocean_geometry.nc
-    referenced by model_nml
+It needs the compiled perfect_model_obs executable, an input.nml, and
+every input file that input.nml names -- here mom6.r.nc (template_file),
+mom6.static.nc (static_file) and ocean_geometry.nc (ocean_geometry) from
+model_nml, so a different MOM6 configuration needs whatever its own
+namelist names instead.  PerfectModelSource checks all of this when it is
+constructed and reports anything missing.
 
 MODEL_OUTPUT points at restart-format output from a MOM6 run (a single
 multi-timeslice file, or a glob over per-time files).  Each assimilation

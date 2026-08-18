@@ -4,6 +4,7 @@ These run without a compiled perfect_model_obs executable.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
 import pytest
@@ -35,6 +36,25 @@ def src_nml(tmp_path):
     path = tmp_path / "input.nml"
     path.write_text(BASE_NML)
     return str(path)
+
+
+@pytest.fixture
+def pmo_run(tmp_path):
+    """A minimal run directory that passes PerfectModelSource's setup check.
+
+    Holds an executable stub, BASE_NML, and the two files BASE_NML names
+    (``mom6.r.nc`` as template_file, ``perfect_input.nc`` as
+    input_state_files).  Nothing here is ever executed.
+    """
+    run_dir = tmp_path / "pmo_run"
+    run_dir.mkdir()
+    (run_dir / "input.nml").write_text(BASE_NML)
+    (run_dir / "mom6.r.nc").touch()
+    (run_dir / "perfect_input.nc").touch()
+    exe = run_dir / "perfect_model_obs"
+    exe.touch()
+    exe.chmod(0o755)
+    return str(run_dir)
 
 
 def _patch(src_nml, tmp_path, **kwargs):
@@ -90,9 +110,9 @@ class _NoStateProvider(ModelStateProvider):
         return None
 
 
-def test_write_obs_seq_skips_window_without_state(tmp_path):
+def test_write_obs_seq_skips_window_without_state(tmp_path, pmo_run):
     source = PerfectModelSource(
-        pmo_run_dir=str(tmp_path),
+        pmo_run_dir=pmo_run,
         obs_network=[
             ObsNetworkEntry(
                 obs_type="OCEAN_TEMPERATURE",
@@ -120,6 +140,86 @@ def test_write_obs_seq_skips_window_without_state(tmp_path):
     assert written is False
 
 
+class TestRunDirCheck:
+    """PerfectModelSource validates its run directory at construction."""
+
+    def _make(self, pmo_run, **kwargs):
+        return PerfectModelSource(pmo_run_dir=pmo_run, obs_network=[], **kwargs)
+
+    def test_valid_run_dir_constructs(self, pmo_run):
+        assert self._make(pmo_run).pmo_run_dir == os.path.abspath(pmo_run)
+
+    def test_missing_dir_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match="is not a directory"):
+            self._make(str(tmp_path / "nope"))
+
+    def test_missing_exe_raises(self, pmo_run):
+        os.remove(os.path.join(pmo_run, "perfect_model_obs"))
+        with pytest.raises(FileNotFoundError, match="no perfect_model_obs executable"):
+            self._make(pmo_run)
+
+    def test_non_executable_exe_raises(self, pmo_run):
+        os.chmod(os.path.join(pmo_run, "perfect_model_obs"), 0o644)
+        with pytest.raises(FileNotFoundError, match="is not executable"):
+            self._make(pmo_run)
+
+    def test_exe_in_subdir_is_resolved(self, pmo_run):
+        # a relative exe path keeps its subdirectory; the window dir gets the
+        # subdirectory symlinked in, so './bin/pmo' is a legitimate setting
+        os.mkdir(os.path.join(pmo_run, "bin"))
+        exe = os.path.join(pmo_run, "bin", "pmo")
+        open(exe, "w").close()
+        os.chmod(exe, 0o755)
+        self._make(pmo_run, perfect_model_obs_exe="./bin/pmo")
+
+    def test_absolute_exe_outside_run_dir(self, pmo_run, tmp_path):
+        exe = tmp_path / "elsewhere_pmo"
+        exe.touch()
+        exe.chmod(0o755)
+        self._make(pmo_run, perfect_model_obs_exe=str(exe))
+
+    def test_missing_input_nml_raises(self, pmo_run):
+        os.remove(os.path.join(pmo_run, "input.nml"))
+        with pytest.raises(FileNotFoundError, match="no input.nml in pmo_run_dir"):
+            self._make(pmo_run)
+
+    def test_unparseable_input_nml_raises(self, pmo_run):
+        # a group left unterminated — a missing '/' is the usual hand-edit slip
+        with open(os.path.join(pmo_run, "input.nml"), "w") as fh:
+            fh.write("&model_nml\n  template_file = 'mom6.r.nc'\n")
+        with pytest.raises(ValueError, match="could not read"):
+            self._make(pmo_run)
+
+    def test_missing_referenced_file_names_the_nml_entry(self, pmo_run):
+        os.remove(os.path.join(pmo_run, "mom6.r.nc"))
+        with pytest.raises(FileNotFoundError) as exc:
+            self._make(pmo_run)
+        message = str(exc.value)
+        assert "mom6.r.nc" in message
+        assert "model_nml:template_file" in message
+
+    def test_all_missing_files_reported_together(self, pmo_run):
+        os.remove(os.path.join(pmo_run, "mom6.r.nc"))
+        os.remove(os.path.join(pmo_run, "perfect_input.nc"))
+        with pytest.raises(FileNotFoundError) as exc:
+            self._make(pmo_run)
+        message = str(exc.value)
+        assert "mom6.r.nc" in message
+        assert "perfect_input.nc" in message
+
+    def test_state_provider_makes_input_state_files_optional(self, pmo_run):
+        # a state_provider repoints input_state_files per window, so the base
+        # namelist's value need not exist
+        os.remove(os.path.join(pmo_run, "perfect_input.nc"))
+        self._make(pmo_run, state_provider=_NoStateProvider())
+
+    def test_template_file_still_required_with_state_provider(self, pmo_run):
+        # mom6.r.nc is named by template_file too, so it stays required
+        os.remove(os.path.join(pmo_run, "mom6.r.nc"))
+        with pytest.raises(FileNotFoundError, match="model_nml:template_file"):
+            self._make(pmo_run, state_provider=_NoStateProvider())
+
+
 class _FixedTimesProvider(ModelStateProvider):
     """Provider stub serving states at a fixed list of valid times."""
 
@@ -133,9 +233,9 @@ class _FixedTimesProvider(ModelStateProvider):
         return None  # coverage checks never reach this
 
 
-def _source(provider):
+def _source(provider, pmo_run):
     return PerfectModelSource(
-        pmo_run_dir="/nonexistent", obs_network=[], state_provider=provider
+        pmo_run_dir=pmo_run, obs_network=[], state_provider=provider
     )
 
 
@@ -153,65 +253,65 @@ DAY = datetime(2015, 10, 4, 12) - datetime(2015, 10, 3, 12)
 
 
 class TestCheckCoverage:
-    def test_aligned_states_pass(self, capsys):
+    def test_aligned_states_pass(self, capsys, pmo_run):
         times = [datetime(2015, 10, d, 12) for d in (4, 5, 6)]
-        _source(_FixedTimesProvider(times)).check_coverage(
+        _source(_FixedTimesProvider(times), pmo_run).check_coverage(
             _windows(datetime(2015, 10, 4, 12), 3, DAY)
         )
         out = capsys.readouterr().out
         assert "3 of 3 window(s) have a state" in out
         assert "outside all windows" in out  # summary line reports 0 outside
 
-    def test_no_state_in_any_window_raises(self):
+    def test_no_state_in_any_window_raises(self, pmo_run):
         # the classic misconfiguration: analysis times a half-day off the
         # model output, so every state lands outside every window
         times = [datetime(2015, 10, 4, 12)]
         with pytest.raises(ValueError, match="No model state falls in any"):
-            _source(_FixedTimesProvider(times)).check_coverage(
+            _source(_FixedTimesProvider(times), pmo_run).check_coverage(
                 _windows(datetime(2015, 10, 6, 0), 3, DAY)
             )
 
-    def test_error_names_the_fix(self):
+    def test_error_names_the_fix(self, pmo_run):
         times = [datetime(2015, 10, 4, 12)]
         with pytest.raises(ValueError) as exc:
-            _source(_FixedTimesProvider(times)).check_coverage(
+            _source(_FixedTimesProvider(times), pmo_run).check_coverage(
                 _windows(datetime(2015, 10, 6, 0), 3, DAY)
             )
         assert "first_analysis=2015-10-04T12:00:00" in str(exc.value)
 
-    def test_reports_states_outside_all_windows(self, capsys):
+    def test_reports_states_outside_all_windows(self, capsys, pmo_run):
         times = [datetime(2015, 10, d, 12) for d in (4, 5, 9)]
-        _source(_FixedTimesProvider(times)).check_coverage(
+        _source(_FixedTimesProvider(times), pmo_run).check_coverage(
             _windows(datetime(2015, 10, 4, 12), 3, DAY)
         )
         out = capsys.readouterr().out
         assert "Outside all windows: 2015-10-09T12:00:00" in out
 
-    def test_reports_shadowed_states(self, capsys):
+    def test_reports_shadowed_states(self, capsys, pmo_run):
         # two states inside one daily window: only the earliest is used
         times = [datetime(2015, 10, 4, 6), datetime(2015, 10, 4, 12)]
-        _source(_FixedTimesProvider(times)).check_coverage(
+        _source(_FixedTimesProvider(times), pmo_run).check_coverage(
             _windows(datetime(2015, 10, 4, 12), 1, DAY)
         )
         out = capsys.readouterr().out
         assert "Shadowed" in out
         assert "2015-10-04T12:00:00" in out
 
-    def test_reports_off_centre_states(self, capsys):
+    def test_reports_off_centre_states(self, capsys, pmo_run):
         # state inside its window but not at the analysis time
         times = [datetime(2015, 10, 4, 12)]
-        _source(_FixedTimesProvider(times)).check_coverage(
+        _source(_FixedTimesProvider(times), pmo_run).check_coverage(
             _windows(datetime(2015, 10, 4, 18), 1, DAY)
         )
         out = capsys.readouterr().out
         assert "Off-centre" in out
 
-    def test_no_provider_is_a_no_op(self):
-        source = PerfectModelSource(pmo_run_dir="/nonexistent", obs_network=[])
+    def test_no_provider_is_a_no_op(self, pmo_run):
+        source = PerfectModelSource(pmo_run_dir=pmo_run, obs_network=[])
         assert source.check_coverage(_windows(datetime(2015, 10, 4, 12), 3, DAY)) is None
 
-    def test_unenumerable_provider_is_a_no_op(self):
+    def test_unenumerable_provider_is_a_no_op(self, pmo_run):
         # _NoStateProvider inherits available_times() -> None
-        assert _source(_NoStateProvider()).check_coverage(
+        assert _source(_NoStateProvider(), pmo_run).check_coverage(
             _windows(datetime(2015, 10, 4, 12), 3, DAY)
         ) is None

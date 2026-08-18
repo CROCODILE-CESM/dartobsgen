@@ -17,6 +17,7 @@ xr = pytest.importorskip("xarray")
 from dartobsgen.model_state import (
     _MOM6_DAYS_TO_DART_EPOCH,
     MOM6StateProvider,
+    input_files_from_nml,
     mom6_time_to_datetime,
     state_vars_from_nml,
 )
@@ -249,3 +250,95 @@ def test_state_vars_from_nml(tmp_path):
         "/\n"
     )
     assert state_vars_from_nml(str(nml)) == ("so", "thetao", "uo", "vo")
+
+
+class TestInputFilesFromNml:
+    """input_files_from_nml maps each named input file to the entry naming it."""
+
+    def _write(self, tmp_path, text):
+        pytest.importorskip("f90nml")
+        nml = tmp_path / "input.nml"
+        nml.write_text(text)
+        return str(nml)
+
+    def test_collects_model_nml_and_state_files(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            "&perfect_model_obs_nml\n"
+            "    input_state_files = 'perfect_input.nc'\n"
+            "/\n"
+            "&model_nml\n"
+            "    ocean_geometry = 'ocean_geometry.nc'\n"
+            "    static_file = 'mom6.static.nc'\n"
+            "    template_file = 'mom6.r.nc'\n"
+            "/\n",
+        )
+        assert input_files_from_nml(path) == {
+            "mom6.r.nc": "model_nml:template_file",
+            "mom6.static.nc": "model_nml:static_file",
+            "ocean_geometry.nc": "model_nml:ocean_geometry",
+            "perfect_input.nc": "perfect_model_obs_nml:input_state_files",
+        }
+
+    def test_ignores_output_and_list_files(self, tmp_path):
+        # output_state_files is written, not read; filter_nml's list files
+        # belong to a different program — neither should be demanded
+        path = self._write(
+            tmp_path,
+            "&perfect_model_obs_nml\n"
+            "    input_state_files = 'mom6.r.nc'\n"
+            "    output_state_files = 'out_mom6.r.nc'\n"
+            "    obs_seq_in_file_name = 'obs_seq.in'\n"
+            "/\n"
+            "&filter_nml\n"
+            "    input_state_file_list = 'filter_input_list.txt'\n"
+            "/\n"
+            "&utilities_nml\n"
+            "    logfilename = 'dart_log.out'\n"
+            "/\n",
+        )
+        assert input_files_from_nml(path) == {
+            "mom6.r.nc": "perfect_model_obs_nml:input_state_files"
+        }
+
+    def test_file_named_twice_reported_against_first_entry(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            "&perfect_model_obs_nml\n"
+            "    input_state_files = 'mom6.r.nc'\n"
+            "/\n"
+            "&model_nml\n"
+            "    template_file = 'mom6.r.nc'\n"
+            "/\n",
+        )
+        # model_nml comes first in the key list, so it is the entry reported
+        assert input_files_from_nml(path) == {"mom6.r.nc": "model_nml:template_file"}
+
+    def test_multiple_state_files(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            "&perfect_model_obs_nml\n"
+            "    input_state_files = 'a.nc', 'b.nc'\n"
+            "/\n",
+        )
+        assert input_files_from_nml(path) == {
+            "a.nc": "perfect_model_obs_nml:input_state_files",
+            "b.nc": "perfect_model_obs_nml:input_state_files",
+        }
+
+    def test_blank_and_absent_entries_skipped(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            "&perfect_model_obs_nml\n"
+            "    input_state_files = ''\n"
+            "/\n"
+            "&model_nml\n"
+            "    template_file =\n"
+            "/\n",
+        )
+        assert input_files_from_nml(path) == {}
+
+    def test_namelist_without_these_entries(self, tmp_path):
+        # e.g. Lorenz 96: nothing to check, not an error
+        path = self._write(tmp_path, "&model_nml\n    model_size = 40\n/\n")
+        assert input_files_from_nml(path) == {}

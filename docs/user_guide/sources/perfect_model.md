@@ -22,9 +22,24 @@ the source object changes.
 - The compiled `perfect_model_obs` executable
 - A base `input.nml` with a `perfect_model_obs_nml` block (the source
   patches only the obs_seq filenames and time-bound fields)
-- Any initial-conditions files referenced by `input.nml`
+- Every input file `input.nml` names — for MOM6 that is `template_file`,
+  `static_file` and `ocean_geometry` from `model_nml`, plus
+  `input_state_files` unless a `state_provider` supplies it per window
 
 This is the same directory structure used to run `perfect_model_obs` by hand.
+
+`PerfectModelSource` checks all of this at construction rather than letting
+it surface as a namelist error from inside `perfect_model_obs`, once per
+window. It reports every missing file at once, each against the namelist
+entry that named it:
+
+```
+input.nml in '/path/to/pmo_run' names file(s) that are not there:
+  ocean_geometry.nc  (named by model_nml:ocean_geometry)
+```
+
+{py:func}`~dartobsgen.input_files_from_nml` is the same reader, if you want
+the list of files a namelist expects without building a source.
 
 ## `ObsNetworkEntry` fields
 
