@@ -92,7 +92,7 @@ class _NoStateProvider(ModelStateProvider):
 
 def test_write_obs_seq_skips_window_without_state(tmp_path):
     source = PerfectModelSource(
-        dart_work_dir=str(tmp_path),
+        pmo_run_dir=str(tmp_path),
         obs_network=[
             ObsNetworkEntry(
                 obs_type="OCEAN_TEMPERATURE",
@@ -135,7 +135,7 @@ class _FixedTimesProvider(ModelStateProvider):
 
 def _source(provider):
     return PerfectModelSource(
-        dart_work_dir="/nonexistent", obs_network=[], state_provider=provider
+        pmo_run_dir="/nonexistent", obs_network=[], state_provider=provider
     )
 
 
@@ -207,7 +207,7 @@ class TestCheckCoverage:
         assert "Off-centre" in out
 
     def test_no_provider_is_a_no_op(self):
-        source = PerfectModelSource(dart_work_dir="/nonexistent", obs_network=[])
+        source = PerfectModelSource(pmo_run_dir="/nonexistent", obs_network=[])
         assert source.check_coverage(_windows(datetime(2015, 10, 4, 12), 3, DAY)) is None
 
     def test_unenumerable_provider_is_a_no_op(self):

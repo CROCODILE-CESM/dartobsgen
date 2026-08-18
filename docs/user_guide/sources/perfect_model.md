@@ -17,7 +17,7 @@ the source object changes.
 
 ## Prerequisites
 
-`dart_work_dir` must contain:
+`pmo_run_dir` must contain:
 
 - The compiled `perfect_model_obs` executable
 - A base `input.nml` with a `perfect_model_obs_nml` block (the source
@@ -119,7 +119,7 @@ anchored on the model output times.
 
 ## Parallel execution
 
-Each window runs in its own subdirectory (`dart_work_dir/windows/{timestamp}/`)
+Each window runs in its own subdirectory (`pmo_run_dir/windows/{timestamp}/`)
 with symlinks back to the shared executable and initial-conditions files.
 This avoids file conflicts when `ProcessPoolExecutor` runs multiple windows
 simultaneously.

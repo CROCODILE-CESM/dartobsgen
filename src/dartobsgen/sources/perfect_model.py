@@ -13,7 +13,7 @@ from .base import DataSource
 
 _DART_EPOCH_PY = datetime(1601, 1, 1)
 
-# Files that must not be symlinked from dart_work_dir into each window dir —
+# Files that must not be symlinked from pmo_run_dir into each window dir —
 # either because the window writes them or because the window patches them.
 _SKIP_LINKS = frozenset({"input.nml", "obs_seq.in", "obs_seq.out", "windows", "dart_log.out"})
 
@@ -181,11 +181,11 @@ class PerfectModelSource(DataSource):
 
     Parameters
     ----------
-    dart_work_dir : str
+    pmo_run_dir : str
         Directory containing the compiled ``perfect_model_obs`` executable,
         a base ``input.nml``, and any initial-conditions files it references.
         Each window runs in a temporary subdirectory of
-        ``{dart_work_dir}/windows/`` that symlinks back to the shared files.
+        ``{pmo_run_dir}/windows/`` that symlinks back to the shared files.
     obs_network : list[ObsNetworkEntry]
         The synthetic observing network.  Each entry defines one observation
         location, type, error variance, and time offset within the window.
@@ -224,12 +224,12 @@ class PerfectModelSource(DataSource):
 
     def __init__(
         self,
-        dart_work_dir: str,
+        pmo_run_dir: str,
         obs_network: list[ObsNetworkEntry],
         perfect_model_obs_exe: str = "./perfect_model_obs",
         state_provider: ModelStateProvider | None = None,
     ):
-        self.dart_work_dir = os.path.abspath(dart_work_dir)
+        self.pmo_run_dir = os.path.abspath(pmo_run_dir)
         self.obs_network = obs_network
         self.perfect_model_obs_exe = perfect_model_obs_exe
         self.state_provider = state_provider
@@ -314,12 +314,12 @@ class PerfectModelSource(DataSource):
             )
 
     def _setup_window_dir(self, window_dir: str) -> None:
-        """Create *window_dir* and symlink shared files from ``dart_work_dir``."""
+        """Create *window_dir* and symlink shared files from ``pmo_run_dir``."""
         os.makedirs(window_dir, exist_ok=True)
-        for name in os.listdir(self.dart_work_dir):
+        for name in os.listdir(self.pmo_run_dir):
             if name in _SKIP_LINKS:
                 continue
-            src = os.path.join(self.dart_work_dir, name)
+            src = os.path.join(self.pmo_run_dir, name)
             dst = os.path.join(window_dir, name)
             if not os.path.exists(dst):
                 os.symlink(src, dst)
@@ -370,12 +370,12 @@ class PerfectModelSource(DataSource):
         t = analysis_time
         secs_of_day = t.hour * 3600 + t.minute * 60 + t.second
         date_str = f"{t.year:04d}-{t.month:02d}-{t.day:02d}-{secs_of_day:05d}"
-        window_dir = os.path.join(self.dart_work_dir, "windows", date_str)
+        window_dir = os.path.join(self.pmo_run_dir, "windows", date_str)
         self._setup_window_dir(window_dir)
 
         obs_seq_in = os.path.join(window_dir, "obs_seq.in")
         obs_seq_out = os.path.join(window_dir, "obs_seq.out")
-        src_nml = os.path.join(self.dart_work_dir, "input.nml")
+        src_nml = os.path.join(self.pmo_run_dir, "input.nml")
         dest_nml = os.path.join(window_dir, "input.nml")
 
         ref_time = state.valid_time if state is not None else analysis_time

@@ -148,7 +148,7 @@ def main() -> None:
 # ------------------------------------------------------------------
 # PerfectModelSource example (Lorenz 96)
 # ------------------------------------------------------------------
-# Prerequisites in DART_WORK_DIR:
+# Prerequisites in PMO_RUN_DIR:
 #   - compiled perfect_model_obs executable
 #   - input.nml with perfect_model_obs_nml block
 #   - perfect_input.nc  (initial conditions, referenced by input.nml)
@@ -156,7 +156,7 @@ def main() -> None:
 # def main() -> None:
 #     """Generate synthetic Lorenz 96 obs via perfect_model_obs."""
 #
-#     DART_WORK_DIR = "/path/to/DART/models/MOM6/work"
+#     PMO_RUN_DIR = "/path/to/pmo_run"
 #
 #     # 40-point Lorenz 96 ring: evenly spaced, single level
 #     import numpy as np
@@ -186,7 +186,7 @@ def main() -> None:
 #     )
 #
 #     source = PerfectModelSource(
-#         dart_work_dir=DART_WORK_DIR,
+#         pmo_run_dir=PMO_RUN_DIR,
 #         obs_network=network,
 #     )
 #

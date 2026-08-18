@@ -3,9 +3,9 @@
 Uses PerfectModelSource to drive DART's perfect_model_obs with a MOM6
 model state, producing one obs_seq file per assimilation window.
 
-@todo HK DART_WORK_DIR needs a better name, because we do not really
-want people running in the source tree DART/models/MOM6/work. 
-Prerequisites in DART_WORK_DIR:
+PMO_RUN_DIR is a standalone directory you set up to run
+perfect_model_obs from -- not DART's source-tree models/MOM6/work.
+Prerequisites in PMO_RUN_DIR:
   - Compiled perfect_model_obs executable
   - input.nml with a perfect_model_obs_nml block
   - mom6.r.nc (template_file), mom6.static.nc, ocean_geometry.nc
@@ -45,8 +45,8 @@ from dartobsgen import (
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-#DART_WORK_DIR = os.path.join(_HERE, "pmo_run")
-DART_WORK_DIR = '/Users/hkershaw/DART/Crocodile/Observations/pmo_run'
+#PMO_RUN_DIR = os.path.join(_HERE, "pmo_run")
+PMO_RUN_DIR = '/Users/hkershaw/DART/Crocodile/Observations/panama_3months/'
 OUTPUT_DIR = "./obs_output_synth"
 
 # MOM6 output (restart or z-space history format, matching the
@@ -55,7 +55,8 @@ OUTPUT_DIR = "./obs_output_synth"
 #    _HERE,
 #    "example_mom6/EEP_MITgcm185Lvgrid_Whitt2026hgrid.mom6.h.z.2015-10-004/mom6.h.nc",
 #)
-MODEL_OUTPUT = '/Users/hkershaw/DART/Crocodile/Observations/TestTutorials/dartobsgen/example_mom6/EEP_MITgcm185Lvgrid_Whitt2026hgrid.mom6.h.z.2015-10-004/mom6.h.nc'
+MODEL_OUTPUT = '/Users/hkershaw/DART/Crocodile/Observations/panama_3months/panama_3months.hist/*.nc'
+
 
 STATE_CACHE_DIR = "./state_cache"
 
@@ -106,14 +107,14 @@ def main() -> None:
         # (the model run start), which would put the first analysis one
         # frequency later and miss the output entirely.  This example's
         # history file holds one daily-mean slice stamped at 2015-10-04 12Z.
-        first_analysis=datetime.datetime(2015, 10, 4, 12),
-        end=datetime.datetime(2015, 10, 8, 12),
+        first_analysis=datetime.datetime(2020, 1, 16, 12),
+        end=datetime.datetime(2020, 4, 15, 12),
         lat_min=-12.0,
         lat_max=12.0,
         lon_min=-170.0,
         lon_max=-95.0,
         obs_types=["FLOAT_TEMPERATURE", "FLOAT_SALINITY"],
-        assimilation_frequency=datetime.timedelta(hours=24),
+        assimilation_frequency=datetime.timedelta(days=30),
         output_dir=OUTPUT_DIR,
         output_prefix="obs_seq",
     )
@@ -122,10 +123,10 @@ def main() -> None:
     provider = MOM6StateProvider(
         MODEL_OUTPUT,
         cache_dir=STATE_CACHE_DIR,
-        required_vars=state_vars_from_nml(os.path.join(DART_WORK_DIR, "input.nml")),
+        required_vars=state_vars_from_nml(os.path.join(PMO_RUN_DIR, "input.nml")),
     )
     source = PerfectModelSource(
-        dart_work_dir=DART_WORK_DIR,
+        pmo_run_dir=PMO_RUN_DIR,
         obs_network=network,
         state_provider=provider,
     )
