@@ -23,7 +23,7 @@ most workflows:
 
 - {py:class}`~dartobsgen.CrocLakeSource` needs `dart_path` — the root of a
   DART clone — to resolve obs type definitions.
-- {py:class}`~dartobsgen.PerfectModelSource` needs a `dart_work_dir`
+- {py:class}`~dartobsgen.PerfectModelSource` needs a `pmo_run_dir`
   containing a **compiled** `perfect_model_obs` executable and its
   `input.nml`. See
   [Synthetic observations](user_guide/sources/perfect_model.md#prerequisites).

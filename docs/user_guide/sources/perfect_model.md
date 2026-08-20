@@ -17,14 +17,29 @@ the source object changes.
 
 ## Prerequisites
 
-`dart_work_dir` must contain:
+`pmo_run_dir` must contain:
 
 - The compiled `perfect_model_obs` executable
 - A base `input.nml` with a `perfect_model_obs_nml` block (the source
   patches only the obs_seq filenames and time-bound fields)
-- Any initial-conditions files referenced by `input.nml`
+- Every input file `input.nml` names — for MOM6 that is `template_file`,
+  `static_file` and `ocean_geometry` from `model_nml`, plus
+  `input_state_files` unless a `state_provider` supplies it per window
 
 This is the same directory structure used to run `perfect_model_obs` by hand.
+
+`PerfectModelSource` checks all of this at construction rather than letting
+it surface as a namelist error from inside `perfect_model_obs`, once per
+window. It reports every missing file at once, each against the namelist
+entry that named it:
+
+```
+input.nml in '/path/to/pmo_run' names file(s) that are not there:
+  ocean_geometry.nc  (named by model_nml:ocean_geometry)
+```
+
+{py:func}`~dartobsgen.input_files_from_nml` is the same reader, if you want
+the list of files a namelist expects without building a source.
 
 ## `ObsNetworkEntry` fields
 
@@ -119,7 +134,7 @@ anchored on the model output times.
 
 ## Parallel execution
 
-Each window runs in its own subdirectory (`dart_work_dir/windows/{timestamp}/`)
+Each window runs in its own subdirectory (`pmo_run_dir/windows/{timestamp}/`)
 with symlinks back to the shared executable and initial-conditions files.
 This avoids file conflicts when `ProcessPoolExecutor` runs multiple windows
 simultaneously.

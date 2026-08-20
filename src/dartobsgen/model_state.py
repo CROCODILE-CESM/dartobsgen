@@ -106,6 +106,50 @@ def state_vars_from_nml(nml_path: str) -> tuple[str, ...]:
     return tuple(str(v).strip() for v in names if v is not None and str(v).strip())
 
 
+# Namelist entries that name an input file a ``perfect_model_obs`` run must be
+# able to read.  Deliberately a fixed list rather than a scan for ``*_file`` /
+# ``*_files``: such a scan sweeps up output files, state-file *lists* and log
+# names (``filter_nml`` alone has several) and would demand files that are
+# written, not read.
+_NML_INPUT_FILE_KEYS: tuple[tuple[str, str], ...] = (
+    ("model_nml", "template_file"),
+    ("model_nml", "static_file"),
+    ("model_nml", "ocean_geometry"),
+    ("perfect_model_obs_nml", "input_state_files"),
+)
+
+
+def input_files_from_nml(nml_path: str) -> dict[str, str]:
+    """Map each input file named in *nml_path* to the entry that names it.
+
+    Returns ``{filename: "group:key"}`` for the namelist entries in
+    :data:`_NML_INPUT_FILE_KEYS`, in namelist order.  A file named by more
+    than one entry is reported once, against the first entry that names it.
+    Groups and keys that are absent, blank, or set to a filename of ``''``
+    are skipped, so a namelist for a model without these entries (Lorenz 96,
+    say) yields an empty mapping rather than an error.
+
+    The ``group:key`` values are for error messages — they let a missing file
+    be reported against the namelist entry that asked for it.
+    :class:`~dartobsgen.sources.perfect_model.PerfectModelSource` uses this
+    to check its run directory before any window runs.
+    """
+    import f90nml  # noqa: PLC0415
+
+    nml = f90nml.read(nml_path)
+    files: dict[str, str] = {}
+    for group, key in _NML_INPUT_FILE_KEYS:
+        if group not in nml or key not in nml[group]:
+            continue
+        value = nml[group][key]
+        entries = value if isinstance(value, list) else [value]
+        for entry in entries:
+            name = str(entry).strip() if entry is not None else ""
+            if name:
+                files.setdefault(name, f"{group}:{key}")
+    return files
+
+
 def mom6_time_to_datetime(raw_days: float) -> datetime:
     """Convert a MOM6 ``Time`` value (days since 0001-01-01) to the datetime DART sees.
 

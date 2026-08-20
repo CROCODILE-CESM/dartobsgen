@@ -4,6 +4,7 @@ from .model_state import (
     ModelState,
     ModelStateProvider,
     MOM6StateProvider,
+    input_files_from_nml,
     mom6_time_to_datetime,
     state_vars_from_nml,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "ModelState",
     "ModelStateProvider",
     "MOM6StateProvider",
+    "input_files_from_nml",
     "mom6_time_to_datetime",
     "state_vars_from_nml",
     "generate_obs_sequences",
