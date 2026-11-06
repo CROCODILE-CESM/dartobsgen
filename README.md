@@ -12,40 +12,6 @@ cd /path/to/dartobsgen
 pip install -e .
 ```
 
-## Quick Start
-
-```python
-import datetime
-from dartobsgen import ObsGenConfig, CrocLakeSource, generate_obs_sequences
-
-config = ObsGenConfig(
-    start=datetime.datetime(2010, 5, 1),   # model run start; first analysis is 06Z
-                                           # (or say it directly: first_analysis=...)
-    end=datetime.datetime(2010, 5, 3),     # last analysis time (inclusive)
-    lat_min=5,   lat_max=60,
-    lon_min=-100, lon_max=-30,
-    obs_types=["ARGO_TEMPERATURE", "ARGO_SALINITY"],
-    assimilation_frequency=datetime.timedelta(hours=6), # assimilate every 6 hours
-    output_dir="./obs_output",
-)
-
-source = CrocLakeSource(
-    crocolake_path="/path/to/crocolake/",
-    dart_path="/path/to/DART/",
-)
-
-# Sequential
-written_files = generate_obs_sequences(config, source)
-
-# Parallel (all CPUs)
-written_files = generate_obs_sequences(config, source, max_workers=None)
-
-# Parallel (fixed number of workers)
-written_files = generate_obs_sequences(config, source, max_workers=4)
-
-print(written_files)
-```
-
 ## Documentation
 
 | Topic | |
