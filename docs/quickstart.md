@@ -22,8 +22,8 @@ def main():
     )
 
     source = CrocLakeSource(
-        crocolake_path="/Users/masmith/Desktop/myfork_fast-osse/CrocoLakePHY/",
-        dart_path="/Users/masmith/Desktop/myfork_fast-osse/DART/",
+        crocolake_path="/path/to/crocolake/",
+        dart_path="/path/to/crocolake/",
     )
 
     # Sequential
