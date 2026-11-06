@@ -40,3 +40,38 @@ class MySource(DataSource):
         if nothing_I_have_falls_in(windows):
             raise ValueError("... and here is the setting that would fix it")
 ```
+
+## Adding a model state provider
+
+`PerfectModelSource` is model-agnostic; everything model-specific lives in a
+`ModelStateProvider`. For models whose output is netCDF files, subclass
+`TimesliceStateProvider` and implement two hooks (a third is optional):
+
+```python
+from dartobsgen import TimesliceStateProvider
+
+class MyModelStateProvider(TimesliceStateProvider):
+    cache_prefix = "mymodel_state"
+    # namelist entries naming files pmo must read (checked at construction)
+    input_file_keys = (("perfect_model_obs_nml", "input_state_files"),)
+
+    def _validate(self, ds, path):
+        """Raise ValueError if ds is not this model's output."""
+
+    def _scan_file(self, ds, path):
+        """Return [(time_index, valid_time), ...] for every slice in ds.
+
+        valid_time must equal what the model's DART read_model_time returns."""
+
+    # optional: default uses the file in place (one timeslice per file)
+    def _materialise(self, ds, src_path, time_index, cache_path):
+        """Write slice time_index to cache_path via self._write_cached(...)."""
+```
+
+The base class handles file resolution, the sorted index, `available_times`,
+the `(date0, date1]` window selection and the atomic slice cache. Providers
+that don't read netCDF files can subclass `ModelStateProvider` directly and
+implement `state_for_window`.
+
+If the model's `model_state_variables` records are not 5 fields long, pass
+`fields_per_entry` to `state_vars_from_nml`.

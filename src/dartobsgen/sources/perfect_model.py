@@ -197,8 +197,11 @@ class PerfectModelSource(DataSource):
         Default is ``"./perfect_model_obs"``.
     state_provider : ModelStateProvider, optional
         Maps each window to a single-timeslice model state file (e.g.
-        :class:`~dartobsgen.model_state.MOM6StateProvider` slicing the
-        output of a model run).  When given, each window's ``input.nml``
+        :class:`~dartobsgen.model_state.MOM6StateProvider` or
+        :class:`~dartobsgen.model_state.CICEStateProvider` indexing the
+        output of a model run).  The provider's ``input_file_keys`` say
+        which ``input.nml`` entries name files to check in ``pmo_run_dir``.  
+	When given, each window's ``input.nml``
         points ``input_state_files`` at that window's state, and observations
         are placed at the state's valid time (plus each entry's
         ``time_offset``).  Windows with no available state are skipped.
@@ -284,7 +287,12 @@ class PerfectModelSource(DataSource):
                 "perfect_model_obs reads its settings from it."
             )
         try:
-            wanted = input_files_from_nml(nml_path)
+            keys = (
+                self.state_provider.input_file_keys
+                if self.state_provider is not None
+                else None
+            )
+            wanted = input_files_from_nml(nml_path, keys)
         except Exception as exc:  # f90nml parse failure, or f90nml absent
             raise ValueError(f"could not read {nml_path}: {exc}") from exc
 

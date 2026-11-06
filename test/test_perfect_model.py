@@ -219,6 +219,15 @@ class TestRunDirCheck:
         with pytest.raises(FileNotFoundError, match="model_nml:template_file"):
             self._make(pmo_run, state_provider=_NoStateProvider())
 
+    def test_provider_input_file_keys_decide_what_is_checked(self, pmo_run):
+        # a provider declaring no template_file key (CICE-like) is not
+        # held to the MOM6 files
+        class _OtherModel(_NoStateProvider):
+            input_file_keys = (("perfect_model_obs_nml", "input_state_files"),)
+
+        os.remove(os.path.join(pmo_run, "mom6.r.nc"))
+        self._make(pmo_run, state_provider=_OtherModel())
+
 
 class _FixedTimesProvider(ModelStateProvider):
     """Provider stub serving states at a fixed list of valid times."""

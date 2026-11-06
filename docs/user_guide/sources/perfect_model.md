@@ -56,9 +56,10 @@ the list of files a namelist expects without building a source.
 ## Driving it from model output: `state_provider`
 
 `perfect_model_obs` cannot advance a large model, so it interpolates from a
-state file you hand it. `MOM6StateProvider` indexes the timeslices of a MOM6
+state file you hand it. A *state provider* indexes the timeslices of a model
 run's output and serves one per window, and observations are then placed at
-**the valid time of that state**, not at the analysis time.
+**the valid time of that state**, not at the analysis time. See
+[Providers](#providers) for the available ones.
 
 That inverts the usual configuration: the analysis times must line up with the
 model output times. Use `first_analysis`, not `start`:
@@ -106,6 +107,35 @@ No model state falls in any assimilation window, so no observations can be gener
 It also flags *shadowed* states (a second state in a window that already has
 an earlier one — only the earliest is used) and *off-centre* states (in a
 window but not at its analysis time, so obs land away from the window centre).
+
+## Providers
+
+| Provider | Model | Time comes from | Slices |
+|---|---|---|---|
+| `MOM6StateProvider` | MOM6 restart or z-space history files | `Time` variable, days since 0001-01-01 | one or many per file; multi-slice files are split into `cache_dir` |
+| `CICEStateProvider` | CICE restart files (`iced.*`) | global attributes `nyr`, `month`, `mday`, `sec` | one per file, used in place |
+
+Both subclass `TimesliceStateProvider`, which owns the model-independent work:
+resolving the file glob, indexing every slice by valid time, picking the
+earliest slice in each window, and caching extracted slices. A provider's
+`valid_time` must be computed exactly as that model's DART `read_model_time`
+computes it, or observations will be placed at a different time than the one
+`perfect_model_obs` reads from the state.
+
+`model_state_variables` records differ by model, so give `state_vars_from_nml`
+the record length (5 for MOM6, the default; 3 for CICE):
+
+```python
+required = state_vars_from_nml("input.nml", fields_per_entry=3)   # CICE
+provider = CICEStateProvider("restarts/iced.*.nc", cache_dir="cache",
+                             required_vars=required)
+```
+
+Each provider also declares `input_file_keys`, the `input.nml` entries that name
+files `perfect_model_obs` must be able to read. `PerfectModelSource` checks
+exactly those in `pmo_run_dir` before any window runs. CICE's template and grid
+files are fixed names inside DART's `model_mod`, not namelist entries, so only
+`input_state_files` is declared for it.
 
 ## Controlling observation time within a window
 

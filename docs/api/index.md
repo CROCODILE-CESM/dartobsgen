@@ -28,7 +28,7 @@ Everything below is importable directly from `dartobsgen`.
    dartobsgen.ObsSeqSource
 ```
 
-## Model states
+## Model states for creating synthetic obs
 
 ```{eval-rst}
 .. autosummary::
@@ -37,9 +37,13 @@ Everything below is importable directly from `dartobsgen`.
 
    dartobsgen.ModelState
    dartobsgen.ModelStateProvider
+   dartobsgen.TimesliceStateProvider
    dartobsgen.MOM6StateProvider
+   dartobsgen.CICEStateProvider
    dartobsgen.mom6_time_to_datetime
+   dartobsgen.cice_time_to_datetime
    dartobsgen.state_vars_from_nml
+   dartobsgen.input_files_from_nml
 ```
 
 ## Spatial masking

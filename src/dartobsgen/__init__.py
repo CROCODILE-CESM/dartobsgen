@@ -1,9 +1,12 @@
 from .config import ObsGenConfig
 from .generate import generate_obs_sequences
 from .model_state import (
+    CICEStateProvider,
+    TimesliceStateProvider,
     ModelState,
     ModelStateProvider,
     MOM6StateProvider,
+    cice_time_to_datetime,
     input_files_from_nml,
     mom6_time_to_datetime,
     state_vars_from_nml,
@@ -29,7 +32,10 @@ __all__ = [
     "DataSource",
     "ModelState",
     "ModelStateProvider",
+    "TimesliceStateProvider",
     "MOM6StateProvider",
+    "CICEStateProvider",
+    "cice_time_to_datetime",
     "input_files_from_nml",
     "mom6_time_to_datetime",
     "state_vars_from_nml",

@@ -7,7 +7,7 @@ variable names, days since 0001-01-01) on the fly in tmp_path.
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import numpy as np
 import pytest
@@ -16,7 +16,10 @@ xr = pytest.importorskip("xarray")
 
 from dartobsgen.model_state import (
     _MOM6_DAYS_TO_DART_EPOCH,
+    CICEStateProvider,
+    TimesliceStateProvider,
     MOM6StateProvider,
+    cice_time_to_datetime,
     input_files_from_nml,
     mom6_time_to_datetime,
     state_vars_from_nml,
@@ -342,3 +345,132 @@ class TestInputFilesFromNml:
         # e.g. Lorenz 96: nothing to check, not an error
         path = self._write(tmp_path, "&model_nml\n    model_size = 40\n/\n")
         assert input_files_from_nml(path) == {}
+
+
+def test_state_vars_from_nml_three_field_records(tmp_path):
+    pytest.importorskip("f90nml")
+    nml = tmp_path / "input.nml"
+    nml.write_text(
+        "&model_nml\n"
+        "    model_state_variables = 'aicen', 'QTY_SEAICE_CONCENTR', 'UPDATE',\n"
+        "                            'vicen', 'QTY_SEAICE_VOLUME', 'UPDATE',\n"
+        "/\n"
+    )
+    assert state_vars_from_nml(str(nml), fields_per_entry=3) == ("aicen", "vicen")
+
+
+def test_input_files_from_nml_custom_keys(tmp_path):
+    pytest.importorskip("f90nml")
+    nml = tmp_path / "input.nml"
+    nml.write_text(
+        "&perfect_model_obs_nml\n    input_state_files = 'a.nc'\n/\n"
+        "&model_nml\n    template_file = 'ignored.nc'\n/\n"
+    )
+    keys = (("perfect_model_obs_nml", "input_state_files"),)
+    assert input_files_from_nml(str(nml), keys) == {
+        "a.nc": "perfect_model_obs_nml:input_state_files"
+    }
+
+
+class _FakeProvider(TimesliceStateProvider):
+    """Minimal subclass: valid time is a global attribute ``t`` in hours."""
+
+    def _validate(self, ds, path):
+        if "t" not in ds.attrs:
+            raise ValueError(f"{path}: no t")
+
+    def _scan_file(self, ds, path):
+        return [(0, datetime(2000, 1, 1) + timedelta(hours=int(ds.attrs["t"])))]
+
+
+class TestTimesliceStateProvider:
+    def _files(self, tmp_path, hours):
+        for h in hours:
+            xr.Dataset({"x": ("n", [1.0])}, attrs={"t": h}).to_netcdf(tmp_path / f"f{h:03d}.nc")
+        return str(tmp_path / "f*.nc")
+
+    def test_default_materialise_uses_file_in_place(self, tmp_path):
+        provider = _FakeProvider(self._files(tmp_path, [0, 24]), cache_dir=str(tmp_path / "c"))
+        state = provider.state_for_window(datetime(2000, 1, 1), datetime(2000, 1, 2))
+        assert state.valid_time == datetime(2000, 1, 2)
+        assert os.path.samefile(state.path, tmp_path / "f024.nc")
+        assert not os.path.exists(tmp_path / "c")
+
+    def test_available_times_sorted_and_window_edges(self, tmp_path):
+        provider = _FakeProvider(self._files(tmp_path, [48, 0, 24]), cache_dir=str(tmp_path / "c"))
+        assert provider.available_times() == [
+            datetime(2000, 1, 1), datetime(2000, 1, 2), datetime(2000, 1, 3)
+        ]
+        # open below, closed above
+        assert provider.state_for_window(datetime(2000, 1, 1), datetime(2000, 1, 2)).valid_time == datetime(2000, 1, 2)
+        assert provider.state_for_window(datetime(2000, 1, 2), datetime(2000, 1, 2, 12)) is None
+
+    def test_required_vars_checked_by_base(self, tmp_path):
+        with pytest.raises(ValueError, match="missing state variable"):
+            _FakeProvider(self._files(tmp_path, [0]), cache_dir=str(tmp_path / "c"),
+                          required_vars=("nope",))
+
+    def test_validate_hook_runs(self, tmp_path):
+        xr.Dataset({"x": ("n", [1.0])}).to_netcdf(tmp_path / "bad.nc")
+        with pytest.raises(ValueError, match="no t"):
+            _FakeProvider(str(tmp_path / "bad.nc"), cache_dir=str(tmp_path / "c"))
+
+    def test_default_input_file_keys_are_inherited(self):
+        assert ("model_nml", "template_file") in _FakeProvider.input_file_keys
+
+
+class TestCiceTime:
+    def test_basic(self):
+        assert cice_time_to_datetime(2010, 3, 4, 3600) == datetime(2010, 3, 4, 1)
+
+    def test_year_zero_is_year_one(self):
+        assert cice_time_to_datetime(0, 1, 1, 0) == datetime(1, 1, 1)
+
+
+def make_cice_file(path, nyr, month, mday, sec, variables=("aicen", "vicen")):
+    ds = xr.Dataset(
+        {v: (("nj", "ni"), np.zeros((2, 2))) for v in variables},
+        attrs={"nyr": nyr, "month": month, "mday": mday, "sec": sec},
+    )
+    ds.to_netcdf(path)
+
+
+class TestCICEStateProvider:
+    @pytest.fixture
+    def restarts(self, tmp_path):
+        for d in (1, 2, 3):
+            make_cice_file(tmp_path / f"iced.2010-01-0{d}.nc", 2010, 1, d, 0)
+        return str(tmp_path / "iced.*.nc")
+
+    def test_window_selection_uses_file_in_place(self, tmp_path, restarts):
+        provider = CICEStateProvider(restarts, cache_dir=str(tmp_path / "c"))
+        state = provider.state_for_window(datetime(2010, 1, 1), datetime(2010, 1, 2))
+        assert state.valid_time == datetime(2010, 1, 2)
+        assert os.path.samefile(state.path, tmp_path / "iced.2010-01-02.nc")
+        assert not os.path.exists(tmp_path / "c")
+
+    def test_lower_edge_belongs_to_previous_window(self, tmp_path, restarts):
+        provider = CICEStateProvider(restarts, cache_dir=str(tmp_path / "c"))
+        assert provider.state_for_window(datetime(2010, 1, 3), datetime(2010, 1, 4)) is None
+
+    def test_available_times(self, tmp_path, restarts):
+        provider = CICEStateProvider(restarts, cache_dir=str(tmp_path / "c"))
+        assert provider.available_times() == [
+            datetime(2010, 1, 1), datetime(2010, 1, 2), datetime(2010, 1, 3)
+        ]
+
+    def test_missing_time_attribute(self, tmp_path):
+        xr.Dataset({"aicen": ("n", [0.0])}, attrs={"nyr": 2010}).to_netcdf(tmp_path / "x.nc")
+        with pytest.raises(ValueError, match="missing global attribute"):
+            CICEStateProvider(str(tmp_path / "x.nc"), cache_dir=str(tmp_path / "c"))
+
+    def test_missing_state_variable(self, tmp_path):
+        make_cice_file(tmp_path / "x.nc", 2010, 1, 1, 0)
+        with pytest.raises(ValueError, match="missing state variable"):
+            CICEStateProvider(str(tmp_path / "x.nc"), cache_dir=str(tmp_path / "c"),
+                              required_vars=("vsnon",))
+
+    def test_input_file_keys_only_state_files(self):
+        assert CICEStateProvider.input_file_keys == (
+            ("perfect_model_obs_nml", "input_state_files"),
+        )
