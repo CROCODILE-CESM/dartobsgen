@@ -240,6 +240,22 @@ class TestValidation:
         with pytest.raises(ValueError, match="Time units"):
             MOM6StateProvider(str(path), cache_dir=cache_dir)
 
+    def test_bare_days_units_accepted(self, tmp_path, cache_dir):
+        # CESM-written MOM6 restarts have Time units "days" with no epoch;
+        # DART ignores units and counts from 0001-01-01, so this is valid.
+        path = tmp_path / "bare_days.nc"
+        make_mom6_file(path, [raw_days(datetime(2010, 1, 1))], units="days")
+        provider = MOM6StateProvider(str(path), cache_dir=cache_dir)
+        assert provider.available_times() == [datetime(2010, 1, 1)]
+
+    def test_bare_days_with_noleap_still_rejected(self, tmp_path, cache_dir):
+        path = tmp_path / "bare_days_noleap.nc"
+        make_mom6_file(
+            path, [raw_days(datetime(2010, 1, 1))], units="days", calendar="noleap"
+        )
+        with pytest.raises(ValueError, match="calendar"):
+            MOM6StateProvider(str(path), cache_dir=cache_dir)
+
 
 def test_state_vars_from_nml(tmp_path):
     pytest.importorskip("f90nml")

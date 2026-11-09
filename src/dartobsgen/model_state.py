@@ -381,10 +381,16 @@ class MOM6StateProvider(TimesliceStateProvider):
     @staticmethod
     def _check_time_metadata(attrs: dict, path: str) -> None:
         units = str(attrs.get("units", ""))
-        if not units.lower().startswith(f"days since {_MOM6_TIME_EPOCH}"):
+        # CESM-written MOM6 restarts give a bare "days" (no epoch).  DART
+        # ignores the units and counts from 0001-01-01, so a bare "days" is
+        # accepted; any *other* stated epoch is rejected because DART would
+        # silently misread it.
+        if units.strip().lower() != "days" and not units.lower().startswith(
+            f"days since {_MOM6_TIME_EPOCH}"
+        ):
             raise ValueError(
                 f"{path}: Time units {units!r}; DART's MOM6 read_model_time "
-                f"assumes 'days since {_MOM6_TIME_EPOCH}'."
+                f"assumes 'days since {_MOM6_TIME_EPOCH}' (or a bare 'days')."
             )
         calendar = str(attrs.get("calendar", "gregorian")).lower()
         if calendar not in _GREGORIAN_CALENDARS:
